@@ -206,6 +206,7 @@ Taurine 构建会拒绝缺失或不可执行的 runtime runner/dumper，避免�
 
 | Profile | 版本 | 文件 | SHA-256 |
 | --- | --- | --- | --- |
+| Dopamine/rootless | 0.1.10 | `wiki.qaq.unfaird_0.1.10_iphoneos-arm64.deb` | `1877ac7e14e5cb1ea871d9a893707a6fce6ee601449605f9a98d10f27c9d7b43` |
 | Dopamine/rootless | 0.1.9 | `wiki.qaq.unfaird_0.1.9_iphoneos-arm64.deb` | `e1fd01af4c057ae2874cd4ec3caf2e4009069a69016a80ce8d57049912a86d11` |
 | Dopamine/rootless | 0.1.8 | `wiki.qaq.unfaird_0.1.8_iphoneos-arm64.deb` | `0a26781f9c40bc8401d11ae1d49e303baa5a74b03d5c51c7f536eff13e0cfde1` |
 | Taurine/Procursus | 0.1.7 | `wiki.qaq.unfaird_0.1.7_iphoneos-arm.deb` | `aec1109e6284308dcb2a4cdf473b21da0b48edf53157d142be4e9d74099a4af8` |
