@@ -18,12 +18,12 @@ services:
       - "8080:8090"
     volumes:
       - ./private-platform:/app:ro
-      - ./config.router.json:/app/config.router.json:ro
+      - ./config.router.json:/config.router.json:ro
       # Keep all runtime state, temporary encrypted IPA files, and final IPA artifacts
       # on the large Docker disk instead of the small iStoreOS overlay partition.
       - /mnt/nvme0n1-4/asspp-platform-data/data:/app/data
     environment:
-      - PLATFORM_CONFIG=/app/config.router.json
+      - PLATFORM_CONFIG=/config.router.json
       - PLATFORM_DATABASE=/app/data/platform.sqlite
       - PLATFORM_BACKUP_DIR=/app/data/backups
       - PLATFORM_MASTER_KEY=${PLATFORM_MASTER_KEY:?set PLATFORM_MASTER_KEY to at least 32 characters}
