@@ -22,7 +22,7 @@ AssppJailbroken 是面向个人越狱 iPhone 的 AssppWeb 后端。它从 Apple 
 `forceExtensionDecryption` 贯通到独立 runner 的 `--force-extensions` 参数，可对主程序、Framework、
 `.appex` 和 Watch 组件执行严格完整解密。
 
-开发版本 `0.1.8` 新增持久化解密 Checkpoint、`main_only` / `compatible` / `strict`
+rootless 发布版本 `0.1.8` 新增持久化解密 Checkpoint、`main_only` / `compatible` / `strict`
 三档扩展策略，以及可恢复 runner 的 `8 → 4 → 2 → 1` Jetsam 自动缩批 Interface。只有 runner
 显式声明 `UNFAIR_PACKAGE_RUNNER_RESUMABLE=1` 时 daemon 才会传递 `--batch-size` 和
 `--checkpoint`，旧 runner 不会收到不兼容参数。daemon 重启后，有原始 IPA 和有效 Checkpoint 的
@@ -199,6 +199,7 @@ Taurine 构建会拒绝缺失或不可执行的 runtime runner/dumper，避免�
 
 | Profile | 版本 | 文件 | SHA-256 |
 | --- | --- | --- | --- |
+| Dopamine/rootless | 0.1.8 | `wiki.qaq.unfaird_0.1.8_iphoneos-arm64.deb` | `0a26781f9c40bc8401d11ae1d49e303baa5a74b03d5c51c7f536eff13e0cfde1` |
 | Taurine/Procursus | 0.1.7 | `wiki.qaq.unfaird_0.1.7_iphoneos-arm.deb` | `aec1109e6284308dcb2a4cdf473b21da0b48edf53157d142be4e9d74099a4af8` |
 | Dopamine/rootless 稳定版 | 0.1.3 | `wiki.qaq.unfaird_0.1.3_rootless_iphoneos-arm64.deb` | `120daf4b5e3018ce53fd4306976a84b78a88d8f7e2dab37eb7c230f3e87f05ae` |
 
