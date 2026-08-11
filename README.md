@@ -35,6 +35,10 @@ rootless 发布版本 `0.1.8` 新增持久化解密 Checkpoint、`main_only` / `
 保持 `pending` 排队状态，当前任务完成或失败后才进入 `downloading`，避免多个大 IPA 并发造成
 daemon 被系统终止并批量出现 `Task interrupted while downloading`。
 
+版本 `0.1.11` 修复局域网 HTTP 页面缺少 WebCrypto `crypto.subtle` 时账号数据无法导出的问题。
+PBKDF2/AES-256-GCM 改用兼容实现并保持原备份格式，同时完善移动 Safari 的 Blob 下载触发和
+导出失败的多语言提示。
+
 ## 本次修复和适配
 
 ### 1. rootless 部署

@@ -271,6 +271,7 @@
       "passwordMismatch": "パスワードが一致しません。",
       "incorrectPassword": "パスワードが間違っているか、データが破損しています。",
       "exportSuccess": "アカウントのエクスポートに成功しました。",
+      "exportFailed": "アカウントをエクスポートできませんでした。もう一度お試しください。",
       "importSuccess": "アカウントのインポートに成功しました。",
       "cancel": "キャンセル",
       "confirmBtn": "確認",

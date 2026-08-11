@@ -271,6 +271,7 @@
       "passwordMismatch": "비밀번호가 일치하지 않습니다.",
       "incorrectPassword": "비밀번호가 틀렸거나 데이터가 손상되었습니다.",
       "exportSuccess": "계정 내보내기 성공.",
+      "exportFailed": "계정을 내보내지 못했습니다. 다시 시도해 주세요.",
       "importSuccess": "계정 가져오기 성공.",
       "cancel": "취소",
       "confirmBtn": "확인",

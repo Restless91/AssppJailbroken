@@ -293,6 +293,7 @@
       "passwordMismatch": "两次输入的密码不一致。",
       "incorrectPassword": "密码错误或数据已损坏。",
       "exportSuccess": "账号导出成功。",
+      "exportFailed": "账号导出失败，请重试。",
       "importSuccess": "账号导入成功。",
       "cancel": "取消",
       "confirmBtn": "确认",

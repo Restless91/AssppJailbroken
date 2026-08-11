@@ -1,41 +1,21 @@
+import { gcm } from "@noble/ciphers/aes.js";
+import { pbkdf2Async } from "@noble/hashes/pbkdf2.js";
+import { sha256 } from "@noble/hashes/sha2.js";
+
 // Define constants for encryption parameters
 const ITERATIONS = 100000;
 const SALT_LENGTH = 16;
 const IV_LENGTH = 12;
+const KEY_LENGTH = 32;
 
 /**
  * Derives a cryptographic key from a password string using PBKDF2.
  */
-async function getPasswordKey(password: string): Promise<CryptoKey> {
-  const enc = new TextEncoder();
-  return await crypto.subtle.importKey(
-    "raw",
-    bytesToArrayBuffer(enc.encode(password)),
-    { name: "PBKDF2" },
-    false,
-    ["deriveBits", "deriveKey"],
-  );
-}
-
-/**
- * Derives an AES-GCM key using the password key and a random salt.
- */
-async function deriveKey(
-  passwordKey: CryptoKey,
-  salt: Uint8Array,
-): Promise<CryptoKey> {
-  return await crypto.subtle.deriveKey(
-    {
-      name: "PBKDF2",
-      salt: bytesToArrayBuffer(salt),
-      iterations: ITERATIONS,
-      hash: "SHA-256",
-    },
-    passwordKey,
-    { name: "AES-GCM", length: 256 },
-    true,
-    ["encrypt", "decrypt"],
-  );
+async function deriveKey(password: string, salt: Uint8Array): Promise<Uint8Array> {
+  return pbkdf2Async(sha256, new TextEncoder().encode(password), salt, {
+    c: ITERATIONS,
+    dkLen: KEY_LENGTH,
+  });
 }
 
 /**
@@ -49,19 +29,11 @@ export async function encryptData(
   const enc = new TextEncoder();
   const encodedData = enc.encode(JSON.stringify(data));
 
-  const salt = crypto.getRandomValues(new Uint8Array(SALT_LENGTH));
-  const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
+  const salt = secureRandomBytes(SALT_LENGTH);
+  const iv = secureRandomBytes(IV_LENGTH);
 
-  const passwordKey = await getPasswordKey(password);
-  const aesKey = await deriveKey(passwordKey, salt);
-
-  const encryptedContent = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: bytesToArrayBuffer(iv) },
-    aesKey,
-    bytesToArrayBuffer(encodedData),
-  );
-
-  const encryptedBytes = new Uint8Array(encryptedContent);
+  const aesKey = await deriveKey(password, salt);
+  const encryptedBytes = gcm(aesKey, iv).encrypt(encodedData);
   const combined = new Uint8Array(
     salt.length + iv.length + encryptedBytes.length,
   );
@@ -97,14 +69,8 @@ export async function decryptData(
     const iv = combined.subarray(SALT_LENGTH, SALT_LENGTH + IV_LENGTH);
     const encryptedBytes = combined.subarray(SALT_LENGTH + IV_LENGTH);
 
-    const passwordKey = await getPasswordKey(password);
-    const aesKey = await deriveKey(passwordKey, salt);
-
-    const decryptedContent = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: bytesToArrayBuffer(iv) },
-      aesKey,
-      bytesToArrayBuffer(encryptedBytes),
-    );
+    const aesKey = await deriveKey(password, salt);
+    const decryptedContent = gcm(aesKey, iv).decrypt(encryptedBytes);
 
     const dec = new TextDecoder();
     const jsonStr = dec.decode(decryptedContent);
@@ -114,8 +80,9 @@ export async function decryptData(
   }
 }
 
-function bytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  const buffer = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(buffer).set(bytes);
-  return buffer;
+function secureRandomBytes(length: number): Uint8Array {
+  if (globalThis.crypto?.getRandomValues == null) {
+    throw new Error("Secure random number generation is unavailable.");
+  }
+  return globalThis.crypto.getRandomValues(new Uint8Array(length));
 }

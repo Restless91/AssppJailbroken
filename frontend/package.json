@@ -11,6 +11,8 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@noble/ciphers": "^2.3.0",
+    "@noble/hashes": "^2.3.0",
     "i18next": "^23.10.0",
     "i18next-browser-languagedetector": "^7.2.0",
     "idb": "^8.0.1",

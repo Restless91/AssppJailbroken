@@ -293,6 +293,7 @@
       "passwordMismatch": "Passwords do not match.",
       "incorrectPassword": "Incorrect password or corrupted data.",
       "exportSuccess": "Accounts exported successfully.",
+      "exportFailed": "Unable to export accounts. Please try again.",
       "importSuccess": "Accounts imported successfully.",
       "cancel": "Cancel",
       "confirmBtn": "Confirm",

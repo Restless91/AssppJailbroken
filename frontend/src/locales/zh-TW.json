@@ -271,6 +271,7 @@
       "passwordMismatch": "兩次輸入的密碼不一致。",
       "incorrectPassword": "密碼錯誤或資料已損壞。",
       "exportSuccess": "帳號匯出成功。",
+      "exportFailed": "帳號匯出失敗，請重試。",
       "importSuccess": "帳號匯入成功。",
       "cancel": "取消",
       "confirmBtn": "確認",
