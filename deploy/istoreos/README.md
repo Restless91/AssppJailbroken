@@ -12,6 +12,12 @@ private-platform
 `PLATFORM_SOURCE=/absolute/path` 覆盖。脚本不会同步或删除远端 `data/`、`config.json`、
 `config.local.json`，因此设备、管理员、Apple ID 和历史任务数据库会保留。
 
+使用密码 SSH 时执行：
+
+```sh
+ROUTER_PASSWORD='路由器密码' ./deploy/istoreos/sync.sh
+```
+
 - 软路由访问地址：`http://192.168.100.1:8080`
 - iPhone worker：在综合管理后台分别添加 iPhone8、iPhone11、iPhone15 的当前局域网地址
 - 容器内服务端口：`8090`
