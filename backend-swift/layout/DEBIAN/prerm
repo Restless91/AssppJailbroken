@@ -1,0 +1,28 @@
+#!/bin/sh
+set -e
+
+UNFAIRD_LABEL="wiki.qaq.unfaird"
+LEGACY_ASSPPWEB_LABEL="wiki.qaq.assppweb"
+
+resolve_prefix() {
+  if [ -f /var/jb/Library/LaunchDaemons/$UNFAIRD_LABEL.plist ]; then
+    printf '%s\n' /var/jb
+    return
+  fi
+  printf '\n'
+}
+
+PREFIX="$(resolve_prefix)"
+UNFAIRD_PLIST="$PREFIX/Library/LaunchDaemons/$UNFAIRD_LABEL.plist"
+LEGACY_ASSPPWEB_PLIST="$PREFIX/Library/LaunchDaemons/$LEGACY_ASSPPWEB_LABEL.plist"
+
+case "$1" in
+  remove|upgrade|deconfigure)
+    if command -v launchctl >/dev/null 2>&1; then
+      launchctl bootout system/$LEGACY_ASSPPWEB_LABEL >/dev/null 2>&1 || launchctl unload "$LEGACY_ASSPPWEB_PLIST" >/dev/null 2>&1 || true
+      launchctl bootout system/$UNFAIRD_LABEL >/dev/null 2>&1 || launchctl unload "$UNFAIRD_PLIST" >/dev/null 2>&1 || true
+    fi
+    ;;
+esac
+
+exit 0

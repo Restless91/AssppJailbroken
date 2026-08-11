@@ -1,0 +1,100 @@
+#!/bin/sh
+set -e
+
+UNFAIRD_LABEL="wiki.qaq.unfaird"
+LEGACY_ASSPPWEB_LABEL="wiki.qaq.assppweb"
+
+resolve_prefix() {
+  if [ -x /var/jb/usr/local/lib/unfaird/UnfairDaemon ] || [ -f /var/jb/Library/LaunchDaemons/$UNFAIRD_LABEL.plist ]; then
+    printf '%s\n' /var/jb
+    return
+  fi
+  printf '\n'
+}
+
+find_libjailbreak() {
+  prefix="$1"
+  for candidate in \
+    "$prefix/usr/lib/libjailbreak.dylib" \
+    "$prefix/basebin/libjailbreak.dylib" \
+    /var/jb/usr/lib/libjailbreak.dylib \
+    /var/jb/basebin/libjailbreak.dylib \
+    /basebin/libjailbreak.dylib \
+    /usr/lib/libjailbreak.dylib
+  do
+    if [ -e "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+find_external_decrypt_provider() {
+  prefix="$1"
+  for candidate in \
+    "$prefix/usr/local/lib/unfaird/fouldecrypt.kernrw" \
+    /usr/local/lib/unfaird/fouldecrypt.kernrw
+  do
+    if [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+PREFIX="$(resolve_prefix)"
+BINARY="$PREFIX/usr/local/lib/unfaird/UnfairDaemon"
+UNFAIRD_PLIST="$PREFIX/Library/LaunchDaemons/$UNFAIRD_LABEL.plist"
+LEGACY_ASSPPWEB_PLIST="$PREFIX/Library/LaunchDaemons/$LEGACY_ASSPPWEB_LABEL.plist"
+
+LIBJAILBREAK="$(find_libjailbreak "$PREFIX" || true)"
+if [ -z "$LIBJAILBREAK" ]; then
+  EXTERNAL_PROVIDER="$(find_external_decrypt_provider "$PREFIX" || true)"
+  if [ -z "$EXTERNAL_PROVIDER" ]; then
+    echo "$UNFAIRD_LABEL requires libjailbreak.dylib or fouldecrypt.kernrw" >&2
+    exit 1
+  fi
+  echo "$UNFAIRD_LABEL using external decrypt provider: $EXTERNAL_PROVIDER" >&2
+fi
+
+install -d -m 0755 /var/tmp/unfaird/jobs /var/tmp/unfaird/logs /var/folders/bg/unfaird/T /var/folders/bg/unfaird/X /var/mobile/AssppWebData/packages
+chown -R root:wheel /var/tmp/unfaird /var/folders/bg/unfaird 2>/dev/null || true
+if id mobile >/dev/null 2>&1; then
+  chown -R mobile:mobile /var/mobile/AssppWebData 2>/dev/null || true
+fi
+chmod 0700 /var/tmp/unfaird/jobs
+chmod 0755 /var/tmp/unfaird/logs /var/folders/bg/unfaird/T /var/folders/bg/unfaird/X /var/mobile/AssppWebData /var/mobile/AssppWebData/packages
+
+chown root:wheel "$BINARY" "$UNFAIRD_PLIST" 2>/dev/null || true
+chmod 0755 "$BINARY"
+chmod 0644 "$UNFAIRD_PLIST"
+
+if ! command -v launchctl >/dev/null 2>&1; then
+  echo "$UNFAIRD_LABEL requires launchctl" >&2
+  exit 1
+fi
+
+launchctl bootout system/$LEGACY_ASSPPWEB_LABEL >/dev/null 2>&1 || launchctl unload "$LEGACY_ASSPPWEB_PLIST" >/dev/null 2>&1 || true
+launchctl disable system/$LEGACY_ASSPPWEB_LABEL >/dev/null 2>&1 || true
+
+load_service() {
+  label="$1"
+  plist="$2"
+  launchctl bootout system/$label >/dev/null 2>&1 || true
+  if launchctl bootstrap system "$plist" >/var/tmp/unfaird/$label.launchctl.log 2>&1; then
+    launchctl enable system/$label >/dev/null 2>&1 || true
+    return 0
+  fi
+  if launchctl load -w "$plist" >>/var/tmp/unfaird/$label.launchctl.log 2>&1; then
+    return 0
+  fi
+  echo "$label launchctl load failed" >&2
+  cat /var/tmp/unfaird/$label.launchctl.log >&2
+  exit 1
+}
+
+load_service "$UNFAIRD_LABEL" "$UNFAIRD_PLIST"
+
+exit 0

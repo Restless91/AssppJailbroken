@@ -1,0 +1,14 @@
+node_modules
+dist
+.git
+.github
+*.md
+e2e
+mnt
+tunnel
+deploy.sh
+icon.jpg
+.claude
+references
+compose*.yml
+.DS_Store

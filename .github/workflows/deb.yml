@@ -1,0 +1,125 @@
+name: Build iOS Deb
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - Makefile
+      - backend-swift/**
+      - frontend/**
+      - .github/workflows/deb.yml
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - Makefile
+      - backend-swift/**
+      - frontend/**
+      - .github/workflows/deb.yml
+
+env:
+  THEOS: ${{ github.workspace }}/theos
+  THEOS_PACKAGE_SCHEME: rootless
+  UNFAIR_REPOSITORY: lbr77/unfair
+  UNFAIR_REF: main
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+
+jobs:
+  build:
+    name: Build rootless iOS deb
+    runs-on: macos-26
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout AssppWeb
+        uses: actions/checkout@v6
+        with:
+          path: AssppWeb
+
+      - name: Checkout UnfairKit dependency
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ env.UNFAIR_REPOSITORY }}
+          ref: ${{ env.UNFAIR_REF }}
+          path: unfair
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: AssppWeb/frontend/package-lock.json
+
+      - name: Select Xcode 26
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcode_path="$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' -print | sort | tail -n 1)"
+          if [[ -z "$xcode_path" ]]; then
+            xcode_path="/Applications/Xcode.app"
+          fi
+          sudo xcode-select -s "$xcode_path/Contents/Developer"
+          xcodebuild -version
+          swift --version
+
+      - name: Cache Theos
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.THEOS }}
+          key: theos-${{ runner.os }}-${{ hashFiles('AssppWeb/.github/workflows/deb.yml') }}
+          restore-keys: |
+            theos-${{ runner.os }}-
+
+      - name: Install Theos
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew list dpkg >/dev/null 2>&1 || brew install dpkg
+          brew list ldid >/dev/null 2>&1 || brew install ldid
+          if [[ -f "$THEOS/makefiles/common.mk" && -x "$THEOS/bin/ldid" ]]; then
+            exit 0
+          fi
+          rm -rf "$THEOS"
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
+          mkdir -p "$THEOS/bin"
+          ln -sf "$(command -v ldid)" "$THEOS/bin/ldid"
+          test -f "$THEOS/makefiles/common.mk"
+          test -x "$THEOS/bin/ldid"
+
+      - name: Verify Apple build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          swift --version
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --find swift-stdlib-tool
+          "$THEOS/bin/ldid" -v || true
+
+      - name: Build deb package
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C AssppWeb build THEOS="$THEOS" THEOS_PACKAGE_SCHEME="$THEOS_PACKAGE_SCHEME"
+
+      - name: Inspect deb package
+        id: deb
+        shell: bash
+        run: |
+          set -euo pipefail
+          deb="$(ls -t AssppWeb/backend-swift/debs/wiki.qaq.unfaird_*_iphoneos-arm64.deb | head -n 1)"
+          test -f "$deb"
+          echo "path=$deb" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$deb" .deb)" >> "$GITHUB_OUTPUT"
+          dpkg-deb --info "$deb"
+          dpkg-deb --contents "$deb" | sed -n '1,160p'
+
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ steps.deb.outputs.name }}
+          path: ${{ steps.deb.outputs.path }}
+          if-no-files-found: error
+          retention-days: 14

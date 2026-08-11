@@ -1,0 +1,8 @@
+[tasks.build]
+run = "make build"
+
+[tasks.iphone-install]
+run = "make install"
+
+[tasks.test]
+run = "make test"
