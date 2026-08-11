@@ -31,6 +31,10 @@ rootless 发布版本 `0.1.8` 新增持久化解密 Checkpoint、`main_only` / `
 版本 `0.1.9` 在设备首页加入按 Apple ID 地区加载的 App Store 免费榜推荐。推荐数据由 daemon
 代理 Apple Marketing Tools 榜单，前端提供响应式卡片、加载骨架、错误重试和应用详情深链接。
 
+版本 `0.1.10` 将 iPhone 设备端 IPA 下载、SINF 注入和砸壳统一限制为单任务串行执行。新任务先
+保持 `pending` 排队状态，当前任务完成或失败后才进入 `downloading`，避免多个大 IPA 并发造成
+daemon 被系统终止并批量出现 `Task interrupted while downloading`。
+
 ## 本次修复和适配
 
 ### 1. rootless 部署

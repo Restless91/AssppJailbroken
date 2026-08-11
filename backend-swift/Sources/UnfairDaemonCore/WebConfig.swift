@@ -32,7 +32,8 @@ struct WebConfig {
             autoCleanupDays: Int(env["AUTO_CLEANUP_DAYS"] ?? "") ?? 0,
             autoCleanupMaxMB: Int(env["AUTO_CLEANUP_MAX_MB"] ?? "") ?? 0,
             maxDownloadMB: Int(env["MAX_DOWNLOAD_MB"] ?? "") ?? 0,
-            downloadThreads: min(max(Int(env["DOWNLOAD_THREADS"] ?? "") ?? 8, 1), 32),
+            // One iPhone has one safe download/decrypt pipeline slot.
+            downloadThreads: 1,
             accessPasswordHash: Self.hash(password)
         )
     }

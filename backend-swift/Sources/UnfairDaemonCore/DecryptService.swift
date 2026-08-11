@@ -5,7 +5,7 @@ import Vapor
 
 struct DecryptService {
     typealias ProcessRunner = (String, [String], URL, URL?, Int?) throws -> PosixSpawnResult
-    typealias JobScheduler = (@escaping () -> Void) -> Void
+    typealias JobScheduler = (@escaping @Sendable () -> Void) -> Void
     typealias PackageVerifier = (URL, URL) throws -> Void
 
     struct Dependencies {
@@ -41,7 +41,7 @@ struct DecryptService {
                 )
                 return { reservation.release() }
             },
-            scheduleJob: { work in DecryptService.decryptQueue.async(execute: work) },
+            scheduleJob: { work in DeviceTaskQueue.shared.async(work) },
             verifyPackage: { outputURL, sourceURL in
                 _ = try DecryptVerifier.verify(
                     outputURL: outputURL,
@@ -58,7 +58,6 @@ struct DecryptService {
     private static let remoteDownloadTimeoutSeconds = 15 * 60
     private static let workDirectoryPath = "/var/tmp/unfaird/jobs"
     private static let cleanupLock = NSLock()
-    private static let decryptQueue = DispatchQueue(label: "wiki.qaq.unfaird.decrypt-queue")
     private static var cleanupTimer: DispatchSourceTimer?
 
     private let dependencies: Dependencies

@@ -16,7 +16,7 @@ final class WebDownloadManager {
 
     private let config: WebConfig
     private let lock = NSLock()
-    private let queue = DispatchQueue(label: "wiki.qaq.unfaird.assppweb-downloads", attributes: .concurrent)
+    private let queue = DeviceTaskQueue.shared
     private var tasks: [String: TaskRecord] = [:]
 
     init(config: WebConfig) throws {
@@ -346,33 +346,46 @@ final class WebDownloadManager {
             return
         }
 
-        do {
-            record.task.status = DownloadStatus.downloading.rawValue
-            record.task.progress = 0
-            record.task.speed = "0 B/s"
-            record.task.error = nil
-            record.task.errorCode = nil
-            record.task.filePath = try taskFileURL(for: record.task).path
-            appendLogLocked(to: &record.task, phase: "download", message: "starting IPA download")
-        } catch {
-            record.task.status = DownloadStatus.failed.rawValue
-            record.task.error = String(describing: error)
-            appendLogLocked(to: &record.task, phase: "download", message: "failed: \(errorDescription(error))")
-            lock.unlock()
-            persistTasks()
-            return
-        }
-
-        let filePath = record.task.filePath ?? ""
         let sinfs = record.task.sinfs ?? []
         let iTunesMetadata = record.task.iTunesMetadata
         let requestBundleID = record.task.software.bundleID
+        record.task.status = DownloadStatus.pending.rawValue
+        record.task.progress = 0
+        record.task.speed = "0 B/s"
+        record.task.error = nil
+        record.task.errorCode = nil
+        appendLogLocked(to: &record.task, phase: "download", message: "waiting for device task slot")
         lock.unlock()
         persistTasks()
 
         queue.async {
             var stage = "Download"
             do {
+                self.lock.lock()
+                guard let queuedRecord = self.tasks[id],
+                      queuedRecord.task.status == DownloadStatus.pending.rawValue
+                else {
+                    self.lock.unlock()
+                    return
+                }
+                do {
+                    queuedRecord.task.filePath = try self.taskFileURL(for: queuedRecord.task).path
+                } catch {
+                    queuedRecord.task.status = DownloadStatus.failed.rawValue
+                    queuedRecord.task.error = self.errorDescription(error)
+                    self.appendLogLocked(to: &queuedRecord.task, phase: "download", message: "failed: \(self.errorDescription(error))")
+                    self.lock.unlock()
+                    self.persistTasks()
+                    return
+                }
+                let filePath = queuedRecord.task.filePath ?? ""
+                queuedRecord.task.status = DownloadStatus.downloading.rawValue
+                queuedRecord.task.progress = 0
+                queuedRecord.task.speed = "0 B/s"
+                self.appendLogLocked(to: &queuedRecord.task, phase: "download", message: "device slot acquired; starting IPA download")
+                self.lock.unlock()
+                self.persistTasks()
+
                 try FileManager.default.createDirectory(
                     at: URL(fileURLWithPath: filePath).deletingLastPathComponent(),
                     withIntermediateDirectories: true
