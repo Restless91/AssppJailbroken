@@ -22,6 +22,12 @@ AssppJailbroken 是面向个人越狱 iPhone 的 AssppWeb 后端。它从 Apple 
 `forceExtensionDecryption` 贯通到独立 runner 的 `--force-extensions` 参数，可对主程序、Framework、
 `.appex` 和 Watch 组件执行严格完整解密。
 
+开发版本 `0.1.8` 新增持久化解密 Checkpoint、`main_only` / `compatible` / `strict`
+三档扩展策略，以及可恢复 runner 的 `8 → 4 → 2 → 1` Jetsam 自动缩批 Interface。只有 runner
+显式声明 `UNFAIR_PACKAGE_RUNNER_RESUMABLE=1` 时 daemon 才会传递 `--batch-size` 和
+`--checkpoint`，旧 runner 不会收到不兼容参数。daemon 重启后，有原始 IPA 和有效 Checkpoint 的
+解密任务会自动重新进入后台队列；Safari 连接并不拥有任务生命周期。
+
 ## 本次修复和适配
 
 ### 1. rootless 部署
@@ -326,10 +332,13 @@ Bundle 冲突和产物校验失败。
 - 校验错误使用稳定错误码，包括 `still_encrypted`、`zero_filled_encrypted_region`、
   `missing_macho` 和 `unexpected_binary_mutation`。
 - Web 下载、上传 API、runner 参数和综合管理能力门禁均有回归测试。
+- Web 任务已持久化 Mach-O 进度、批次和尝试次数；daemon 重启可识别并恢复仍有 IPA 的解密任务。
+- 扩展校验策略已从布尔值升级为 `main_only`、`compatible`、`strict`，并兼容旧任务字段。
 
 后续优化项：
 
-- 为大型 IPA 增加持久化 batch checkpoint 和退出 137 自动缩批恢复。
+- 在 iPhone runtime runner 内实现 `--checkpoint` / `--batch-size` Adapter；daemon 侧 Interface 和
+  `8 → 4 → 2 → 1` 调度已完成，未声明能力的旧 runner 会保持原调用方式。
 - 把 Taurine runtime runner/dumper 源码和构建入口完全收拢到单一可复现发布流水线。
 - 增加真实设备升级测试矩阵和 deb 内 `arm64`/`arm64e` 构建期自动审计。
 - 让解密期断点恢复复用已下载 IPA，而不是重新执行完整下载。

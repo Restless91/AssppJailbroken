@@ -186,6 +186,12 @@
       "machO": "已验证 {{verified}}/{{total}} 个 Mach-O",
       "errorCode": "错误代码"
     },
+    "checkpoint": {
+      "title": "可恢复砸壳进度",
+      "progress": "{{completed}}/{{total}} 个 Mach-O",
+      "batch": "批次大小 {{size}}",
+      "attempt": "第 {{count}} 次尝试"
+    },
     "add": {
       "title": "新建下载",
       "emptyTitle": "准备新建",

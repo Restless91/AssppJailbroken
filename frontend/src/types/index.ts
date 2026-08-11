@@ -93,6 +93,18 @@ export interface DownloadTask {
     verifiedMachOCount: number;
   };
   sha256?: string;
+  extensionDecryptionPolicy?: "main_only" | "compatible" | "strict";
+  decryptCheckpoint?: {
+    phase: "queued" | "preparing" | "scanning" | "decrypting" | "packaging" | "verifying" | "completed";
+    schemaVersion?: number;
+    inputSize?: number;
+    attempt: number;
+    batchSize: number;
+    completedMachOCount: number;
+    totalMachOCount?: number;
+    currentPath?: string;
+    updatedAt: string;
+  };
   createdAt: string;
 }
 

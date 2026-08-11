@@ -33,6 +33,26 @@ enum DecryptVerifier {
         sourceURL: URL? = nil,
         allowEncryptedExtensions: Bool = false
     ) throws -> DecryptVerificationReport {
+        try verifyArchive(
+            outputURL: outputURL,
+            sourceURL: sourceURL,
+            extensionPolicy: allowEncryptedExtensions ? .compatible : .strict
+        )
+    }
+
+    static func verify(
+        outputURL: URL,
+        sourceURL: URL? = nil,
+        extensionPolicy: ExtensionDecryptionPolicy
+    ) throws -> DecryptVerificationReport {
+        try verifyArchive(outputURL: outputURL, sourceURL: sourceURL, extensionPolicy: extensionPolicy)
+    }
+
+    private static func verifyArchive(
+        outputURL: URL,
+        sourceURL: URL?,
+        extensionPolicy: ExtensionDecryptionPolicy
+    ) throws -> DecryptVerificationReport {
         let archive: Archive
         do {
             archive = try Archive(url: outputURL, accessMode: .read)
@@ -55,7 +75,7 @@ enum DecryptVerifier {
             outputMachOPaths.insert(entry.path)
             scanned += 1
             if result.encrypted {
-                if allowEncryptedExtensions && isAppExtensionPath(entry.path) {
+                if permitsEncryptedBinary(at: entry.path, policy: extensionPolicy) {
                     allowedEncryptedCount += 1
                 } else {
                     encrypted.append(entry.path)
@@ -88,6 +108,19 @@ enum DecryptVerifier {
 
     private static func isAppExtensionPath(_ path: String) -> Bool {
         path.contains(".appex/") || path.contains("/Watch/")
+    }
+
+    private static func permitsEncryptedBinary(at path: String, policy: ExtensionDecryptionPolicy) -> Bool {
+        switch policy {
+        case .strict:
+            return false
+        case .compatible:
+            return isAppExtensionPath(path)
+        case .mainOnly:
+            // Payload/Foo.app/Foo has three path components. Nested Mach-O files
+            // (Frameworks, PlugIns, Watch and helpers) are optional in main-only mode.
+            return path.split(separator: "/").count > 3
+        }
     }
 
     private static func inspect(entry: Entry, archive: Archive) throws -> (encrypted: Bool, zeroFilled: Bool)? {

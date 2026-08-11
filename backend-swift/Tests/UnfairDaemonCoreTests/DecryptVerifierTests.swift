@@ -65,6 +65,21 @@ final class DecryptVerifierTests: XCTestCase {
         }
     }
 
+    func testMainOnlyAllowsEncryptedFrameworkButCompatibleRejectsIt() throws {
+        let context = try FixtureContext()
+        defer { context.cleanup() }
+        let ipa = context.root.appendingPathComponent("encrypted-framework.ipa")
+        try makeIPA(at: ipa, entries: [
+            "Payload/Test.app/Test": makeMachO(cryptid: 0, encryptedByte: 0x71),
+            "Payload/Test.app/Frameworks/Optional.framework/Optional": makeMachO(cryptid: 1, encryptedByte: 0x42),
+        ])
+
+        XCTAssertNoThrow(try DecryptVerifier.verify(outputURL: ipa, extensionPolicy: .mainOnly))
+        XCTAssertThrowsError(try DecryptVerifier.verify(outputURL: ipa, extensionPolicy: .compatible)) { error in
+            XCTAssertEqual((error as? DecryptVerificationError)?.code, .stillEncrypted)
+        }
+    }
+
     func testRejectsZeroFilledEncryptedRegion() throws {
         let context = try FixtureContext()
         defer { context.cleanup() }

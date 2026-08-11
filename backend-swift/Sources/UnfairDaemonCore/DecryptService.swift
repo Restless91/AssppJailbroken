@@ -320,8 +320,8 @@ struct DecryptService {
                 inputPath: inputURL.path,
                 outputPath: job.outputURL.path,
                 workingDirectoryPath: packageWorkingDirectory.path,
-                forceExtensionDecryption: false,
-                supportsForceExtensions: runnerPath != currentExecutable
+                extensionPolicy: .compatible,
+                supportsExtensionPolicy: runnerPath != currentExecutable
             ),
             job.directoryURL,
             sandboxProfileURL,

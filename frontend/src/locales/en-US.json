@@ -186,6 +186,12 @@
       "machO": "Verified {{verified}}/{{total}} Mach-O files",
       "errorCode": "Error code"
     },
+    "checkpoint": {
+      "title": "Recoverable decryption progress",
+      "progress": "{{completed}}/{{total}} Mach-O files",
+      "batch": "Batch size {{size}}",
+      "attempt": "Attempt {{count}}"
+    },
     "add": {
       "title": "New Download",
       "emptyTitle": "Ready to Create",

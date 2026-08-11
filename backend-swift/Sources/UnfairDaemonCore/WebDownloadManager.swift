@@ -25,6 +25,7 @@ final class WebDownloadManager {
         try FileManager.default.createDirectory(at: config.dataDirectory, withIntermediateDirectories: true)
         try loadPersistedTasks()
         cleanOrphanedPackages()
+        resumeRecoverableDecryptions()
     }
 
     func allTasks() -> [DownloadTask] {
@@ -85,7 +86,8 @@ final class WebDownloadManager {
     func createTask(
         _ request: CreateDownloadRequest,
         validateAppleURL: Bool = true,
-        forceExtensionDecryption: Bool? = nil
+        forceExtensionDecryption: Bool? = nil,
+        extensionDecryptionPolicy: ExtensionDecryptionPolicy? = nil
     ) throws -> DownloadTask {
         if validateAppleURL {
             try validateDownloadURL(request.downloadURL)
@@ -120,7 +122,11 @@ final class WebDownloadManager {
             filePath: nil,
             createdAt: currentTimestampString(),
             hasFile: nil,
-            forceExtensionDecryption: forceExtensionDecryption
+            forceExtensionDecryption: forceExtensionDecryption,
+            extensionDecryptionPolicy: ExtensionDecryptionPolicy.resolved(
+                explicit: extensionDecryptionPolicy,
+                legacyForce: forceExtensionDecryption
+            )
         )
         var loggedTask = task
         appendLogLocked(to: &loggedTask, phase: "download", message: "queued \(request.software.name) \(request.software.version)")
@@ -141,7 +147,9 @@ final class WebDownloadManager {
             downloadURL: request.sourceURL,
             sinfs: request.sinfs,
             iTunesMetadata: request.iTunesMetadata
-        ), validateAppleURL: false, forceExtensionDecryption: request.forceExtensionDecryption)
+        ), validateAppleURL: false,
+           forceExtensionDecryption: request.forceExtensionDecryption,
+           extensionDecryptionPolicy: request.extensionDecryptionPolicy)
     }
 
     func deleteTask(id: String) -> Bool {
@@ -157,6 +165,7 @@ final class WebDownloadManager {
         lock.unlock()
 
         deletePackageFile(path: filePath)
+        try? FileManager.default.removeItem(at: checkpointURL(for: id))
         persistTasks()
         return true
     }
@@ -189,9 +198,93 @@ final class WebDownloadManager {
             lock.unlock()
             return false
         }
+        let canResumeDecrypt = record.task.downloadURL == nil &&
+            record.task.decryptCheckpoint != nil &&
+            record.task.filePath.map(fileExists) == true
         lock.unlock()
-        startDownload(id: id)
+        if canResumeDecrypt {
+            startDecryptOnly(id: id)
+        } else {
+            startDownload(id: id)
+        }
         return true
+    }
+
+    private func resumeRecoverableDecryptions() {
+        lock.lock()
+        let ids = tasks.values.compactMap { record -> String? in
+            let task = record.task
+            guard task.status == DownloadStatus.paused.rawValue,
+                  task.decryptCheckpoint != nil,
+                  task.filePath.map(fileExists) == true
+            else { return nil }
+            return task.id
+        }
+        lock.unlock()
+        for id in ids {
+            appendLog(id: id, phase: "decrypt", message: "resuming persisted checkpoint after daemon restart")
+            startDecryptOnly(id: id)
+        }
+    }
+
+    private func startDecryptOnly(id: String) {
+        lock.lock()
+        guard let record = tasks[id],
+              let filePath = record.task.filePath,
+              fileExists(filePath)
+        else {
+            lock.unlock()
+            return
+        }
+        let bundleID = record.task.software.bundleID
+        record.task.status = DownloadStatus.decrypting.rawValue
+        record.task.error = nil
+        record.task.errorCode = nil
+        appendLogLocked(to: &record.task, phase: "decrypt", message: "queued persisted package for resume")
+        lock.unlock()
+        persistTasks()
+
+        queue.async {
+            do {
+                let packageSize = ((try? FileManager.default.attributesOfItem(atPath: filePath)[.size]) as? NSNumber)?.int64Value ?? 0
+                let storageReservation = try DecryptTaskGate.shared.reserve(
+                    workDirectory: self.packagesDirectory,
+                    bytesPerTask: StorageBudget.requiredBytes(packageSize: packageSize)
+                )
+                defer { storageReservation.release() }
+                guard let bundleLease = BundleTaskGate.shared.tryAcquire(bundleID: bundleID) else {
+                    throw Abort(.conflict, reason: "another task is processing this bundle")
+                }
+                defer { bundleLease.release() }
+                let ipaURL = URL(fileURLWithPath: filePath)
+                try self.decryptInPlace(ipaURL, taskID: id)
+                let sha256 = try ArtifactDigest.sha256(of: ipaURL)
+                self.updateTask(id: id) { task in
+                    task.status = DownloadStatus.completed.rawValue
+                    task.progress = 100
+                    task.speed = "0 B/s"
+                    task.sha256 = sha256
+                    task.error = nil
+                    task.errorCode = nil
+                    task.decryptCheckpoint = nil
+                    task.sessionFieldsCleared()
+                    self.appendLogLocked(to: &task, phase: "verify", message: "sha256 \(sha256)")
+                    self.appendLogLocked(to: &task, phase: "download", message: "completed after resume")
+                }
+                self.persistTasks()
+            } catch {
+                if self.isPaused(id: id) { return }
+                let message = "Decrypt failed: \(self.errorDescription(error))"
+                self.updateTask(id: id) { task in
+                    task.status = DownloadStatus.failed.rawValue
+                    task.error = message
+                    task.errorCode = DecryptFailureClassifier.code(for: error, message: message)
+                    task.speed = "0 B/s"
+                    self.appendLogLocked(to: &task, phase: "decrypt", message: "resume failed: \(self.errorDescription(error))")
+                }
+                self.persistTasks()
+            }
+        }
     }
 
     func deletePackageFile(id: String) -> Bool {
@@ -329,6 +422,7 @@ final class WebDownloadManager {
                     task.iTunesMetadata = nil
                     task.sha256 = sha256
                     task.errorCode = nil
+                    task.decryptCheckpoint = nil
                     task.sessionFieldsCleared()
                     self.appendLogLocked(to: &task, phase: "verify", message: "sha256 \(sha256)")
                     self.appendLogLocked(to: &task, phase: "download", message: "completed")
@@ -410,7 +504,7 @@ final class WebDownloadManager {
             }
             lock.unlock()
         }
-        let decryptID = UUID()
+        let decryptID = UUID(uuidString: taskID) ?? UUID()
         let jobsRoot = URL(fileURLWithPath: "/var/tmp/unfaird/jobs", isDirectory: true)
         let jobDirectory = jobsRoot.appendingPathComponent(decryptID.uuidString, isDirectory: true)
         let packageWorkingDirectory = try PackageRunnerSandbox.packageWorkingDirectory(for: decryptID)
@@ -419,10 +513,14 @@ final class WebDownloadManager {
 
         try FileManager.default.createDirectory(at: jobDirectory, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: packageWorkingDirectory, withIntermediateDirectories: true)
+        var completedSuccessfully = false
         defer {
             try? FileManager.default.removeItem(at: jobDirectory)
             try? FileManager.default.removeItem(at: packageWorkingDirectory)
             try? FileManager.default.removeItem(at: outputURL)
+            if completedSuccessfully {
+                try? FileManager.default.removeItem(at: checkpointURL(for: taskID))
+            }
         }
 
         let sandboxProfileURL = try PackageRunnerSandbox.writeProfile(jobDirectory: jobDirectory)
@@ -434,30 +532,61 @@ final class WebDownloadManager {
             currentExecutablePath: currentRunnerPath
         )
         lock.lock()
-        let forceExtensionDecryption = tasks[taskID]?.task.forceExtensionDecryption == true
+        let storedPolicy = tasks[taskID]?.task.extensionDecryptionPolicy
+        let legacyForce = tasks[taskID]?.task.forceExtensionDecryption
         lock.unlock()
-        appendLog(id: taskID, phase: "decrypt", message: "package runner: \(runnerPath)")
-        let result = try PosixSpawn.run(
-            executablePath: runnerPath,
-            arguments: PackageRunnerResolver.arguments(
-                inputPath: ipaURL.path,
-                outputPath: outputURL.path,
-                workingDirectoryPath: packageWorkingDirectory.path,
-                forceExtensionDecryption: forceExtensionDecryption,
-                supportsForceExtensions: runnerPath != currentRunnerPath
-            ),
-            workingDirectory: jobDirectory,
-            sandboxProfileURL: sandboxProfileURL,
-            timeoutSeconds: timeoutSeconds,
-            cancellation: cancellation,
-            onOutputLine: { [weak self] stream, line in
-                self?.appendLog(
-                    id: taskID,
-                    phase: "decrypt",
-                    message: "\(self?.outputStreamLabel(stream) ?? "output"): \(line)"
-                )
-            }
+        let extensionPolicy = ExtensionDecryptionPolicy.resolved(explicit: storedPolicy, legacyForce: legacyForce)
+        let supportsResumableBatches = PackageRunnerResolver.supportsResumableBatches()
+        let inputSize = ((try? FileManager.default.attributesOfItem(atPath: ipaURL.path)[.size]) as? NSNumber)?.int64Value ?? 0
+        let loadedCheckpoint = loadCheckpoint(taskID: taskID)
+        var checkpoint = (loadedCheckpoint?.schemaVersion == DecryptCheckpoint.currentSchemaVersion &&
+            loadedCheckpoint?.inputSize == inputSize) ? loadedCheckpoint! : DecryptCheckpoint(
+            phase: .preparing,
+            inputSize: inputSize,
+            attempt: 1,
+            batchSize: AdaptiveBatchPolicy.initialBatchSize,
+            completedMachOCount: 0,
+            totalMachOCount: nil,
+            currentPath: nil,
+            updatedAt: currentTimestampString()
         )
+        saveCheckpoint(checkpoint, taskID: taskID)
+        appendLog(id: taskID, phase: "decrypt", message: "package runner: \(runnerPath)")
+        var result: PosixSpawnResult
+        while true {
+            checkpoint.phase = .decrypting
+            checkpoint.updatedAt = currentTimestampString()
+            saveCheckpoint(checkpoint, taskID: taskID)
+            result = try PosixSpawn.run(
+                executablePath: runnerPath,
+                arguments: PackageRunnerResolver.arguments(
+                    inputPath: ipaURL.path,
+                    outputPath: outputURL.path,
+                    workingDirectoryPath: packageWorkingDirectory.path,
+                    extensionPolicy: extensionPolicy,
+                    supportsExtensionPolicy: runnerPath != currentRunnerPath,
+                    batchSize: checkpoint.batchSize,
+                    checkpointPath: checkpointURL(for: taskID).path,
+                    supportsResumableBatches: supportsResumableBatches
+                ),
+                workingDirectory: jobDirectory,
+                sandboxProfileURL: sandboxProfileURL,
+                timeoutSeconds: timeoutSeconds,
+                cancellation: cancellation,
+                onOutputLine: { [weak self] stream, line in
+                    self?.recordRunnerOutput(taskID: taskID, stream: stream, line: line)
+                }
+            )
+            guard result.exitCode == 137,
+                  supportsResumableBatches,
+                  let smallerBatch = AdaptiveBatchPolicy.nextBatchSize(afterMemoryPressure: checkpoint.batchSize)
+            else { break }
+            checkpoint.attempt += 1
+            checkpoint.batchSize = smallerBatch
+            checkpoint.updatedAt = currentTimestampString()
+            saveCheckpoint(checkpoint, taskID: taskID)
+            appendLog(id: taskID, phase: "decrypt", message: "helper exit 137; retrying with batch size \(smallerBatch)")
+        }
 
         if cancellation.isCancelled {
             throw Abort(.conflict, reason: "decrypt cancelled")
@@ -472,7 +601,7 @@ final class WebDownloadManager {
         let verification = try DecryptVerifier.verify(
             outputURL: outputURL,
             sourceURL: ipaURL,
-            allowEncryptedExtensions: forceExtensionDecryption == false
+            extensionPolicy: extensionPolicy
         )
         updateTask(id: taskID) { task in
             task.verification = verification
@@ -483,7 +612,58 @@ final class WebDownloadManager {
             message: "verified \(verification.verifiedMachOCount)/\(verification.scannedMachOCount) Mach-O files"
         )
         try replacePackageFile(at: ipaURL, with: outputURL)
+        completedSuccessfully = true
         appendLog(id: taskID, phase: "decrypt", message: "complete")
+    }
+
+    private func checkpointURL(for taskID: String) -> URL {
+        config.dataDirectory
+            .appendingPathComponent("checkpoints", isDirectory: true)
+            .appendingPathComponent("\(taskID).json")
+    }
+
+    private func loadCheckpoint(taskID: String) -> DecryptCheckpoint? {
+        let url = checkpointURL(for: taskID)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(DecryptCheckpoint.self, from: data)
+    }
+
+    private func saveCheckpoint(_ checkpoint: DecryptCheckpoint, taskID: String) {
+        let url = checkpointURL(for: taskID)
+        do {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder().encode(checkpoint).write(to: url, options: .atomic)
+            updateTask(id: taskID) { task in task.decryptCheckpoint = checkpoint }
+            persistTasks()
+        } catch {
+            appendLog(id: taskID, phase: "decrypt", message: "checkpoint write failed: \(errorDescription(error))")
+        }
+    }
+
+    private func recordRunnerOutput(taskID: String, stream: PosixSpawn.OutputStream, line: String) {
+        appendLog(id: taskID, phase: "decrypt", message: "\(outputStreamLabel(stream)): \(line)")
+        guard stream == .stdout else { return }
+        var checkpoint = loadCheckpoint(taskID: taskID) ?? DecryptCheckpoint(
+            phase: .decrypting,
+            attempt: 1,
+            batchSize: AdaptiveBatchPolicy.initialBatchSize,
+            completedMachOCount: 0,
+            totalMachOCount: nil,
+            currentPath: nil,
+            updatedAt: currentTimestampString()
+        )
+        if let value = line.split(separator: ":").last,
+           line.contains("mach-o binaries scanned:"),
+           let total = Int(value.trimmingCharacters(in: .whitespaces)) {
+            checkpoint.totalMachOCount = total
+        } else if line.hasPrefix("decrypted: ") || line.hasPrefix("skipped: ") {
+            checkpoint.completedMachOCount += 1
+            checkpoint.currentPath = String(line.dropFirst(line.firstIndex(of: ":").map { line.distance(from: line.startIndex, to: $0) + 2 } ?? 0))
+        } else {
+            return
+        }
+        checkpoint.updatedAt = currentTimestampString()
+        saveCheckpoint(checkpoint, taskID: taskID)
     }
 
     private func reportProgress(id: String, downloaded: Int64, total: Int64, elapsed: TimeInterval, delta: Int64) {
@@ -606,6 +786,18 @@ final class WebDownloadManager {
 
             if task.status == DownloadStatus.failed.rawValue {
                 tasks[task.id] = TaskRecord(task: task)
+                continue
+            }
+
+            if task.status == DownloadStatus.decrypting.rawValue,
+               task.decryptCheckpoint != nil,
+               let path = task.filePath,
+               fileExists(path) {
+                task.status = DownloadStatus.paused.rawValue
+                task.error = nil
+                appendLogLocked(to: &task, phase: "decrypt", message: "checkpoint recovered; waiting to resume")
+                tasks[task.id] = TaskRecord(task: task)
+                needsPersist = true
                 continue
             }
 

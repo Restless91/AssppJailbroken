@@ -263,6 +263,29 @@ export default function PackageDetail() {
           errorCode={task.errorCode}
         />
 
+        {task.decryptCheckpoint && !isCompleted && (
+          <div className="card card-pad text-sm">
+            <div className="flex justify-between gap-4">
+              <span className="detail-label">{t("downloads.checkpoint.title")}</span>
+              <span className="detail-value">
+                {t("downloads.checkpoint.progress", {
+                  completed: task.decryptCheckpoint.completedMachOCount,
+                  total: task.decryptCheckpoint.totalMachOCount ?? "?",
+                })}
+              </span>
+            </div>
+            <div className="mt-2 flex justify-between gap-4 text-muted">
+              <span>{t("downloads.checkpoint.batch", { size: task.decryptCheckpoint.batchSize })}</span>
+              <span>{t("downloads.checkpoint.attempt", { count: task.decryptCheckpoint.attempt })}</span>
+            </div>
+            {task.decryptCheckpoint.currentPath && (
+              <p className="mt-2 truncate font-mono text-xs text-muted">
+                {task.decryptCheckpoint.currentPath}
+              </p>
+            )}
+          </div>
+        )}
+
         {((task.logs?.length ?? 0) > 0 ||
           isActive ||
           downloadAction === "simulator") && (

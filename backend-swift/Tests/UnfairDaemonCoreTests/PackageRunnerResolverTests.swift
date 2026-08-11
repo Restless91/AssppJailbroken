@@ -37,10 +37,26 @@ final class PackageRunnerResolverTests: XCTestCase {
             inputPath: "/input.ipa",
             outputPath: "/output.ipa",
             workingDirectoryPath: "/work",
-            forceExtensionDecryption: true,
-            supportsForceExtensions: true
+            extensionPolicy: .strict,
+            supportsExtensionPolicy: true
         )
 
         XCTAssertEqual(arguments.last, "--force-extensions")
+    }
+
+    func testResumableRunnerReceivesBatchAndCheckpoint() {
+        let arguments = PackageRunnerResolver.arguments(
+            inputPath: "/input.ipa",
+            outputPath: "/output.ipa",
+            workingDirectoryPath: "/work",
+            extensionPolicy: .compatible,
+            supportsExtensionPolicy: true,
+            batchSize: 4,
+            checkpointPath: "/state/checkpoint.json",
+            supportsResumableBatches: true
+        )
+
+        XCTAssertTrue(arguments.contains("--batch-size"))
+        XCTAssertTrue(arguments.contains("--checkpoint"))
     }
 }

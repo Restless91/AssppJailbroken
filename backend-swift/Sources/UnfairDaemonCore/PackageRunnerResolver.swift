@@ -2,6 +2,7 @@ import Foundation
 
 enum PackageRunnerResolver {
     static let environmentKey = "UNFAIR_PACKAGE_RUNNER"
+    static let resumableRunnerEnvironmentKey = "UNFAIR_PACKAGE_RUNNER_RESUMABLE"
 
     static func executablePath(
         currentExecutablePath: String,
@@ -23,8 +24,11 @@ enum PackageRunnerResolver {
         inputPath: String,
         outputPath: String,
         workingDirectoryPath: String,
-        forceExtensionDecryption: Bool,
-        supportsForceExtensions: Bool
+        extensionPolicy: ExtensionDecryptionPolicy,
+        supportsExtensionPolicy: Bool,
+        batchSize: Int? = nil,
+        checkpointPath: String? = nil,
+        supportsResumableBatches: Bool = false
     ) -> [String] {
         var values = [
             "package",
@@ -33,9 +37,19 @@ enum PackageRunnerResolver {
             "--working-directory", workingDirectoryPath,
             "--verbose",
         ]
-        if forceExtensionDecryption && supportsForceExtensions {
+        if extensionPolicy == .strict && supportsExtensionPolicy {
             values.append("--force-extensions")
         }
+        if supportsResumableBatches, let batchSize, let checkpointPath {
+            values.append(contentsOf: ["--batch-size", String(batchSize), "--checkpoint", checkpointPath])
+        }
         return values
+    }
+
+    static func supportsResumableBatches(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        let value = environment[resumableRunnerEnvironmentKey]?.lowercased()
+        return value == "1" || value == "true" || value == "yes"
     }
 }
