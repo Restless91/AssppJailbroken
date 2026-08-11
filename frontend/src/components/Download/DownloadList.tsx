@@ -27,6 +27,7 @@ export default function DownloadList() {
     loading,
     pauseDownload,
     resumeDownload,
+    retryDownload,
     deleteDownload,
     hashToEmail,
   } = useDownloads();
@@ -255,6 +256,7 @@ export default function DownloadList() {
               task={task}
               onPause={pauseDownload}
               onResume={resumeDownload}
+              onRetry={retryDownload}
               onDelete={handleDelete}
             />
           ))}

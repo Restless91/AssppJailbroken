@@ -16,6 +16,7 @@ interface DownloadsState {
   }) => Promise<void>;
   pauseDownload: (id: string) => Promise<void>;
   resumeDownload: (id: string) => Promise<void>;
+  retryDownload: (id: string) => Promise<void>;
   deleteDownload: (id: string) => Promise<void>;
 }
 
@@ -71,6 +72,13 @@ export const useDownloadsStore = create<DownloadsState>((set, get) => ({
     const task = get().tasks.find((t) => t.id === id);
     if (!task) return;
     await downloadsApi.resumeDownload(id, task.accountHash);
+    await get().fetchTasks();
+  },
+
+  retryDownload: async (id) => {
+    const task = get().tasks.find((t) => t.id === id);
+    if (!task) return;
+    await downloadsApi.retryDownload(id, task.accountHash);
     await get().fetchTasks();
   },
 

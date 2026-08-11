@@ -93,6 +93,8 @@ export interface DownloadTask {
     verifiedMachOCount: number;
   };
   sha256?: string;
+  queuePosition?: number;
+  canRetry?: boolean;
   extensionDecryptionPolicy?: "main_only" | "compatible" | "strict";
   decryptCheckpoint?: {
     phase: "queued" | "preparing" | "scanning" | "decrypting" | "packaging" | "verifying" | "completed";

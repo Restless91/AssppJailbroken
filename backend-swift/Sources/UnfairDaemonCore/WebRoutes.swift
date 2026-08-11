@@ -171,6 +171,13 @@ private func registerDownloadRoutes(_ app: Application, config: WebConfig, manag
             manager.resumeTask(id: id)
         }
     }
+
+    app.post("api", "downloads", ":id", "retry") { req -> Response in
+        try requireAccess(req, config: config)
+        return try changeDownloadState(req, manager: manager, failure: "Cannot retry this download") { id in
+            manager.retryTask(id: id)
+        }
+    }
 }
 
 private func registerPackageRoutes(_ app: Application, config: WebConfig, manager: WebDownloadManager) {

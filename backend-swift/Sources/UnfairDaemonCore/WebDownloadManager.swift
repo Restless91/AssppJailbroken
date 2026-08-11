@@ -15,23 +15,30 @@ final class WebDownloadManager {
     private static let maxTaskLogLines = 200
 
     private let config: WebConfig
+    private let recoveryStore: DownloadRecoveryStore
     private let lock = NSLock()
-    private let queue = DeviceTaskQueue.shared
+    private let queue: DeviceTaskScheduling
     private var tasks: [String: TaskRecord] = [:]
 
-    init(config: WebConfig) throws {
+    init(config: WebConfig, queue: DeviceTaskScheduling = DeviceTaskQueue.shared) throws {
         self.config = config
+        self.queue = queue
+        recoveryStore = try DownloadRecoveryStore(
+            directory: config.dataDirectory.appendingPathComponent("recovery", isDirectory: true)
+        )
         try FileManager.default.createDirectory(at: packagesDirectory, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: config.dataDirectory, withIntermediateDirectories: true)
         try loadPersistedTasks()
         cleanOrphanedPackages()
-        resumeRecoverableDecryptions()
+        resumeRecoverableTasks()
     }
 
     func allTasks() -> [DownloadTask] {
         lock.lock()
-        defer { lock.unlock() }
-        return tasks.values.map { sanitized($0.task) }
+        let snapshots = tasks.values.map(\.task)
+        let positions = queuePositionsLocked()
+        lock.unlock()
+        return snapshots.map { sanitized($0, queuePosition: positions[$0.id]) }
     }
 
     func task(id: String) -> DownloadTask? {
@@ -40,7 +47,7 @@ final class WebDownloadManager {
         guard let record = tasks[id] else {
             return nil
         }
-        return sanitized(record.task)
+        return sanitized(record.task, queuePosition: queuePositionsLocked()[id])
     }
 
     func completedTask(id: String) -> DownloadTask? {
@@ -131,6 +138,15 @@ final class WebDownloadManager {
         var loggedTask = task
         appendLogLocked(to: &loggedTask, phase: "download", message: "queued \(request.software.name) \(request.software.version)")
 
+        try recoveryStore.save(
+            DownloadRecoveryMaterial(
+                downloadURL: request.downloadURL,
+                sinfs: request.sinfs,
+                iTunesMetadata: request.iTunesMetadata
+            ),
+            taskID: id
+        )
+
         lock.lock()
         tasks[id] = TaskRecord(task: loggedTask)
         lock.unlock()
@@ -166,6 +182,7 @@ final class WebDownloadManager {
 
         deletePackageFile(path: filePath)
         try? FileManager.default.removeItem(at: checkpointURL(for: id))
+        recoveryStore.remove(taskID: id)
         persistTasks()
         return true
     }
@@ -210,20 +227,56 @@ final class WebDownloadManager {
         return true
     }
 
-    private func resumeRecoverableDecryptions() {
+    func retryTask(id: String) -> Bool {
+        guard let material = try? recoveryStore.load(taskID: id) else { return false }
+
         lock.lock()
-        let ids = tasks.values.compactMap { record -> String? in
-            let task = record.task
-            guard task.status == DownloadStatus.paused.rawValue,
-                  task.decryptCheckpoint != nil,
-                  task.filePath.map(fileExists) == true
-            else { return nil }
-            return task.id
+        guard let record = tasks[id], record.task.status == DownloadStatus.failed.rawValue else {
+            lock.unlock()
+            return false
         }
+        let oldPath = record.task.filePath
+        record.task.downloadURL = material.downloadURL
+        record.task.sinfs = material.sinfs
+        record.task.iTunesMetadata = material.iTunesMetadata
+        record.task.status = DownloadStatus.pending.rawValue
+        record.task.progress = 0
+        record.task.speed = "0 B/s"
+        record.task.error = nil
+        record.task.errorCode = nil
+        record.task.filePath = nil
+        appendLogLocked(to: &record.task, phase: "download", message: "failed task returned to queue")
         lock.unlock()
-        for id in ids {
-            appendLog(id: id, phase: "decrypt", message: "resuming persisted checkpoint after daemon restart")
-            startDecryptOnly(id: id)
+
+        deletePackageFile(path: oldPath)
+        persistTasks()
+        startDownload(id: id)
+        return true
+    }
+
+    private func resumeRecoverableTasks() {
+        lock.lock()
+        let resumable = tasks.values.compactMap { record -> (String, Bool, String)? in
+            let task = record.task
+            if task.status == DownloadStatus.pending.rawValue, task.downloadURL != nil {
+                return (task.id, false, task.createdAt)
+            }
+            if task.status == DownloadStatus.paused.rawValue,
+               task.decryptCheckpoint != nil,
+               task.filePath.map(fileExists) == true {
+                return (task.id, true, task.createdAt)
+            }
+            return nil
+        }.sorted { $0.2 < $1.2 }
+        lock.unlock()
+        for (id, decryptOnly, _) in resumable {
+            if decryptOnly {
+                appendLog(id: id, phase: "decrypt", message: "resuming persisted checkpoint after daemon restart")
+                startDecryptOnly(id: id)
+            } else {
+                appendLog(id: id, phase: "download", message: "restored persisted queue entry after daemon restart")
+                startDownload(id: id)
+            }
         }
     }
 
@@ -271,6 +324,7 @@ final class WebDownloadManager {
                     self.appendLogLocked(to: &task, phase: "verify", message: "sha256 \(sha256)")
                     self.appendLogLocked(to: &task, phase: "download", message: "completed after resume")
                 }
+                self.recoveryStore.remove(taskID: id)
                 self.persistTasks()
             } catch {
                 if self.isPaused(id: id) { return }
@@ -440,6 +494,7 @@ final class WebDownloadManager {
                     self.appendLogLocked(to: &task, phase: "verify", message: "sha256 \(sha256)")
                     self.appendLogLocked(to: &task, phase: "download", message: "completed")
                 }
+                self.recoveryStore.remove(taskID: id)
                 self.persistTasks()
             } catch {
                 if self.isPaused(id: id) {
@@ -748,7 +803,7 @@ final class WebDownloadManager {
         return tasks[id]?.task.status == DownloadStatus.paused.rawValue
     }
 
-    private func sanitized(_ task: DownloadTask) -> DownloadTask {
+    private func sanitized(_ task: DownloadTask, queuePosition: Int? = nil) -> DownloadTask {
         var output = task
         output.downloadURL = nil
         output.sinfs = nil
@@ -757,7 +812,17 @@ final class WebDownloadManager {
         if let path = task.filePath {
             output.hasFile = fileExists(path)
         }
+        output.queuePosition = queuePosition
+        output.canRetry = task.status == DownloadStatus.failed.rawValue &&
+            ((try? recoveryStore.load(taskID: task.id)) != nil)
         return output
+    }
+
+    private func queuePositionsLocked() -> [String: Int] {
+        let pending = tasks.values.map(\.task)
+            .filter { $0.status == DownloadStatus.pending.rawValue }
+            .sorted { $0.createdAt < $1.createdAt }
+        return Dictionary(uniqueKeysWithValues: pending.enumerated().map { ($0.element.id, $0.offset + 1) })
     }
 
     private func taskFileURL(for task: DownloadTask) throws -> URL {
@@ -778,6 +843,7 @@ final class WebDownloadManager {
         for var task in persisted {
             task.sessionFieldsCleared()
             task.speed = "0 B/s"
+            let recovery = try? recoveryStore.load(taskID: task.id)
 
             if task.status == DownloadStatus.completed.rawValue,
                let path = task.filePath,
@@ -809,6 +875,28 @@ final class WebDownloadManager {
                 task.status = DownloadStatus.paused.rawValue
                 task.error = nil
                 appendLogLocked(to: &task, phase: "decrypt", message: "checkpoint recovered; waiting to resume")
+                tasks[task.id] = TaskRecord(task: task)
+                needsPersist = true
+                continue
+            }
+
+            if let recovery,
+               task.status == DownloadStatus.pending.rawValue ||
+                task.status == DownloadStatus.downloading.rawValue ||
+                task.status == DownloadStatus.injecting.rawValue ||
+                task.status == DownloadStatus.decrypting.rawValue {
+                if let path = task.filePath {
+                    deletePackageFile(path: path)
+                }
+                task.downloadURL = recovery.downloadURL
+                task.sinfs = recovery.sinfs
+                task.iTunesMetadata = recovery.iTunesMetadata
+                task.status = DownloadStatus.pending.rawValue
+                task.progress = 0
+                task.filePath = nil
+                task.error = nil
+                task.errorCode = nil
+                appendLogLocked(to: &task, phase: "download", message: "recoverable task restored to queue")
                 tasks[task.id] = TaskRecord(task: task)
                 needsPersist = true
                 continue
@@ -854,7 +942,7 @@ final class WebDownloadManager {
         guard DownloadStatus(rawValue: task.status) != nil else {
             return false
         }
-        return task.status != DownloadStatus.pending.rawValue || task.filePath != nil
+        return true
     }
 
     private func cleanOrphanedPackages() {

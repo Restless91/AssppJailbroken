@@ -10,6 +10,7 @@ interface DownloadItemProps {
   task: DownloadTask;
   onPause: (id: string) => void;
   onResume: (id: string) => void;
+  onRetry: (id: string) => void;
   onDelete: (id: string) => void;
 }
 
@@ -17,6 +18,7 @@ export default function DownloadItem({
   task,
   onPause,
   onResume,
+  onRetry,
   onDelete,
 }: DownloadItemProps) {
   const { t } = useTranslation();
@@ -66,6 +68,12 @@ export default function DownloadItem({
             </div>
           )}
 
+          {task.status === "pending" && task.queuePosition != null && (
+            <p className="mt-2 text-[12px] font-medium text-muted">
+              {t("downloads.queuePosition", { position: task.queuePosition })}
+            </p>
+          )}
+
           {task.error && (
             <p className="alert mt-2 text-[12px]" data-tone="error">
               {task.error}
@@ -89,6 +97,14 @@ export default function DownloadItem({
                 className="btn btn-primary btn-sm"
               >
                 {t("downloads.package.resume")}
+              </button>
+            )}
+            {task.status === "failed" && task.canRetry && (
+              <button
+                onClick={() => onRetry(task.id)}
+                className="btn btn-primary btn-sm"
+              >
+                {t("downloads.package.retry")}
               </button>
             )}
             {isCompleted && task.hasFile && (

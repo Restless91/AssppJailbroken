@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { fetchDownloads } from '../../src/api/downloads';
+import { fetchDownloads, retryDownload } from '../../src/api/downloads';
 
 describe('api/downloads', () => {
   beforeEach(() => {
@@ -32,6 +32,19 @@ describe('api/downloads', () => {
 
     await expect(fetchDownloads(['abcdef12'])).rejects.toThrow(
       'Invalid downloads response',
+    );
+  });
+
+  it('returns a failed task to its device queue', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response('{}', { status: 200 }),
+    );
+
+    await retryDownload('task-1', 'abcdef12');
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/downloads/task-1/retry?accountHash=abcdef12',
+      expect.objectContaining({ method: 'POST' }),
     );
   });
 });

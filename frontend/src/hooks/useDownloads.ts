@@ -12,6 +12,7 @@ export function useDownloads() {
     startDownload,
     pauseDownload,
     resumeDownload,
+    retryDownload,
     deleteDownload,
   } = useDownloadsStore();
   const { accounts } = useAccounts();
@@ -52,6 +53,7 @@ export function useDownloads() {
     startDownload,
     pauseDownload,
     resumeDownload,
+    retryDownload,
     deleteDownload,
   };
 }

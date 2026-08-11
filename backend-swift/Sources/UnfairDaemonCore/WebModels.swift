@@ -22,7 +22,7 @@ struct Software: Content {
     var primaryGenreName: String
 }
 
-struct Sinf: Content {
+struct Sinf: Content, Equatable {
     var id: Int64
     var sinf: String
 }
@@ -48,6 +48,8 @@ struct DownloadTask: Content {
     var forceExtensionDecryption: Bool? = nil
     var extensionDecryptionPolicy: ExtensionDecryptionPolicy? = nil
     var decryptCheckpoint: DecryptCheckpoint? = nil
+    var queuePosition: Int? = nil
+    var canRetry: Bool? = nil
 }
 
 struct PackageInfo: Content {

@@ -39,6 +39,11 @@ export async function resumeDownload(
   await apiPost(`/api/downloads/${id}/resume?${params}`);
 }
 
+export async function retryDownload(id: string, accountHash: string) {
+  const params = new URLSearchParams({ accountHash });
+  await apiPost(`/api/downloads/${id}/retry?${params}`);
+}
+
 export async function deleteDownload(
   id: string,
   accountHash: string,

@@ -3,6 +3,60 @@ import Foundation
 import XCTest
 
 final class WebDownloadManagerTests: XCTestCase {
+    func testRestoresPersistedPendingTaskIntoItsOriginalQueuePosition() throws {
+        let context = try DownloadManagerTestContext()
+        defer { context.cleanup() }
+        let task = context.task(status: "pending", error: nil)
+        try context.writeTasks([task])
+        let recoveryStore = try DownloadRecoveryStore(
+            directory: context.dataDirectory.appendingPathComponent("recovery", isDirectory: true)
+        )
+        try recoveryStore.save(
+            DownloadRecoveryMaterial(
+                downloadURL: "https://example.apple.com/app.ipa",
+                sinfs: [Sinf(id: 1, sinf: "ticket")],
+                iTunesMetadata: "metadata"
+            ),
+            taskID: task.id
+        )
+        let queue = HoldingDeviceTaskQueue()
+
+        let manager = try WebDownloadManager(config: context.config, queue: queue)
+
+        let restored = try XCTUnwrap(manager.task(id: task.id))
+        XCTAssertEqual(restored.status, "pending")
+        XCTAssertEqual(restored.queuePosition, 1)
+        XCTAssertEqual(queue.count, 1)
+        XCTAssertTrue(restored.logs?.contains(where: { $0.contains("restored persisted queue entry") }) == true)
+    }
+
+    func testFailedRecoverableTaskCanBeQueuedAgain() throws {
+        let context = try DownloadManagerTestContext()
+        defer { context.cleanup() }
+        let task = context.task(status: "failed", error: "Download failed: offline")
+        try context.writeTasks([task])
+        try DownloadRecoveryStore(
+            directory: context.dataDirectory.appendingPathComponent("recovery", isDirectory: true)
+        ).save(
+            DownloadRecoveryMaterial(
+                downloadURL: "https://example.apple.com/app.ipa",
+                sinfs: [],
+                iTunesMetadata: nil
+            ),
+            taskID: task.id
+        )
+        let queue = HoldingDeviceTaskQueue()
+        let manager = try WebDownloadManager(config: context.config, queue: queue)
+
+        XCTAssertTrue(manager.retryTask(id: task.id))
+
+        let retried = try XCTUnwrap(manager.task(id: task.id))
+        XCTAssertEqual(retried.status, "pending")
+        XCTAssertNil(retried.error)
+        XCTAssertEqual(retried.queuePosition, 1)
+        XCTAssertEqual(queue.count, 1)
+    }
+
     func testLoadsFailedTasksFromPersistence() throws {
         let context = try DownloadManagerTestContext()
         defer { context.cleanup() }
@@ -82,6 +136,23 @@ final class WebDownloadManagerTests: XCTestCase {
         _ = try WebDownloadManager(config: context.config)
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: emptyVersionDirectory.path))
+    }
+}
+
+private final class HoldingDeviceTaskQueue: DeviceTaskScheduling, @unchecked Sendable {
+    private let lock = NSLock()
+    private var work: [@Sendable () -> Void] = []
+
+    func async(_ work: @escaping @Sendable () -> Void) {
+        lock.lock()
+        self.work.append(work)
+        lock.unlock()
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return work.count
     }
 }
 
