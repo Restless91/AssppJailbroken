@@ -150,6 +150,7 @@ const wechatAccessTokenCache = { token: '', expiresAt: 0 };
 const activeJobStatuses = new Set(['running', 'downloading', 'decrypting', 'uploading']);
 const deviceReconnectGraceMs = Math.max(30, Number(config.deviceReconnectGraceSeconds || 180)) * 1000;
 const notificationRetries = new Set();
+const jobEventClients = new Set();
 
 await mkdir(join(rootDir, 'data'), { recursive: true });
 await mkdir(artifactDirectory, { recursive: true });
@@ -762,6 +763,11 @@ async function routeApi(req, res, url) {
       ? state.jobs
       : state.jobs.filter((job) => job.openid === actor.openid);
     json(res, 200, enrichJobs(jobs.slice().reverse()));
+    return;
+  }
+  if (url.pathname === '/api/jobs/events' && req.method === 'GET') {
+    const actor = requireActor(req, url);
+    startJobEventStream(req, res, actor);
     return;
   }
   if (url.pathname === '/api/jobs' && req.method === 'POST') {
@@ -3136,7 +3142,40 @@ function getJob(id) {
 
 function touch(job, persist = true) {
   job.updatedAt = new Date().toISOString();
+  broadcastJobChange(job);
   if (persist) saveState().catch(console.error);
+}
+
+function startJobEventStream(req, res, actor) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  res.write(`event: ready\ndata: ${JSON.stringify({ now: new Date().toISOString() })}\n\n`);
+  const client = { res, actor };
+  jobEventClients.add(client);
+  const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 20_000);
+  const maximumLifetime = setTimeout(() => res.end(), 60 * 60 * 1000);
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    clearTimeout(maximumLifetime);
+    jobEventClients.delete(client);
+  });
+}
+
+function broadcastJobChange(job) {
+  if (!jobEventClients.size) return;
+  const payload = `event: job.changed\ndata: ${JSON.stringify({ id: job.id, updatedAt: job.updatedAt })}\n\n`;
+  for (const client of jobEventClients) {
+    if (!client.actor.isAdmin && client.actor.openid !== job.openid) continue;
+    try {
+      client.res.write(payload);
+    } catch {
+      jobEventClients.delete(client);
+    }
+  }
 }
 
 async function failJob(jobId, error) {
