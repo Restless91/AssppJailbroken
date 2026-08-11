@@ -91,6 +91,16 @@
       "loadDetails": "加载详情",
       "download": "下载",
       "downloading": "下载中..."
+      ,"source": "历史版本来源"
+      ,"currentSource": "当前来源：{{provider}}"
+      ,"loaded": "已加载 {{count}} 个版本，来源 {{provider}}。"
+      ,"cached": "已从缓存加载 {{count}} 个版本，来源 {{provider}}。"
+      ,"appleLoaded": "已从 Apple 账号加载 {{count}} 个版本 ID。"
+      ,"partialFailure": "部分来源不可用，已自动尝试其他来源"
+      ,"refresh": "强制刷新"
+      ,"manualId": "手动输入版本 ID"
+      ,"versionId": "版本 ID"
+      ,"accountRequired": "下载历史版本需要先配置当前地区的 Apple ID 账号"
     }
   },
   "accounts": {
@@ -169,6 +179,12 @@
     },
     "item": {
       "viewPackage": "查看安装包"
+    },
+    "verification": {
+      "title": "砸壳校验",
+      "result": "Mach-O 校验",
+      "machO": "已验证 {{verified}}/{{total}} 个 Mach-O",
+      "errorCode": "错误代码"
     },
     "add": {
       "title": "新建下载",

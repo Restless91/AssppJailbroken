@@ -42,6 +42,10 @@ struct DownloadTask: Content {
     var filePath: String?
     var createdAt: String
     var hasFile: Bool?
+    var verification: DecryptVerificationReport? = nil
+    var sha256: String? = nil
+    var errorCode: DecryptFailureCode? = nil
+    var forceExtensionDecryption: Bool? = nil
 }
 
 struct PackageInfo: Content {
@@ -58,6 +62,15 @@ struct CreateDownloadRequest: Content {
     var downloadURL: String
     var sinfs: [Sinf]
     var iTunesMetadata: String?
+}
+
+struct CreateExternalURLDownloadRequest: Content {
+    var software: Software
+    var accountHash: String
+    var sourceURL: String
+    var sinfs: [Sinf]
+    var iTunesMetadata: String?
+    var forceExtensionDecryption: Bool?
 }
 
 struct ITunesSearchResponse: Decodable {

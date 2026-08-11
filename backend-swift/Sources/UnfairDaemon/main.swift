@@ -60,6 +60,9 @@ struct Package: ParsableCommand {
     var verbose = false
 
     func run() throws {
+        #if os(iOS)
+        try raiseJetsamLimit(megabytes: 512)
+        #endif
         try PackageProcessor(logger: UnfairLogger(verbose: verbose) { message in
             print(message)
         }).process(
@@ -82,6 +85,15 @@ private func raiseJetsamLimit(megabytes: Int32) throws {
     guard result == 0 else {
         throw ValidationError(String(cString: message))
     }
+    var active: Int32 = 0
+    var inactive: Int32 = 0
+    let readResult = message.withUnsafeMutableBufferPointer { buffer in
+        unfaird_get_jetsam_limits(&active, &inactive, buffer.baseAddress, buffer.count)
+    }
+    guard readResult == 0 else {
+        throw ValidationError(String(cString: message))
+    }
+    print("jetsam memory limit verified: active=\(active) MB inactive=\(inactive) MB")
 }
 
 private func checkSupportedOS() throws {

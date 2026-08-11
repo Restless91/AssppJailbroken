@@ -32,6 +32,22 @@ interface VersionMetadataResponse {
   metadata: VersionMetadata;
 }
 
+export interface HistoricalVersionRecord {
+  versionId: string;
+  version: string;
+  date?: string;
+  sizeText?: string;
+  source: string;
+}
+
+export interface HistoricalVersionListResponse {
+  provider: string;
+  records: HistoricalVersionRecord[];
+  versions: string[];
+  errors: string[];
+  cached?: boolean;
+}
+
 interface AppleDownloadResponse {
   account: Account;
   task: DownloadTask;
@@ -79,6 +95,16 @@ export async function listVersions(
   return apiPost<VersionListResponse>('/api/apple/versions', {
     account,
     software,
+  });
+}
+
+export async function listHistoricalVersions(
+  software: Software,
+  provider = 'auto',
+): Promise<HistoricalVersionListResponse> {
+  return apiPost<HistoricalVersionListResponse>('/api/apple/historical-versions', {
+    software,
+    provider,
   });
 }
 

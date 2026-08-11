@@ -139,3 +139,7 @@ references/
 mnt/
 tunnel/
 deploy.sh
+
+# Local device backups and package inspection scratch data
+backend-swift/backups/
+/work/

@@ -24,7 +24,7 @@
         <key>JetsamMemoryLimit</key>
         <integer>512</integer>
         <key>JetsamPriority</key>
-        <integer>-49</integer>
+        <integer>10</integer>
     </dict>
     <key>WorkingDirectory</key>
     <string>/var/tmp/unfaird</string>
@@ -34,6 +34,10 @@
         <string>@DYLD_LIBRARY_PATH@</string>
         <key>PATH</key>
         <string>@LAUNCHD_PATH@</string>
+        <key>UNFAIRD_JB_PREFIX</key>
+        <string>@INSTALL_PREFIX@</string>
+        <key>UNFAIR_PACKAGE_RUNNER</key>
+        <string>@PACKAGE_RUNNER@</string>
         <key>PUBLIC_DIR</key>
         <string>@INSTALL_PREFIX@/usr/share/assppweb/public</string>
         <key>DATA_DIR</key>

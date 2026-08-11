@@ -122,6 +122,18 @@ private func registerDownloadRoutes(_ app: Application, config: WebConfig, manag
         return try jsonEncodableResponse(task, status: .created)
     }
 
+    app.post("api", "downloads", "external-url") { req -> Response in
+        try requireAccess(req, config: config)
+        let body = try req.content.decode(CreateExternalURLDownloadRequest.self)
+        guard body.software.id != 0,
+              body.accountHash.isEmpty == false,
+              body.sourceURL.isEmpty == false
+        else {
+            throw Abort(.badRequest, reason: "Missing required fields: software, accountHash, sourceURL, sinfs")
+        }
+        return try jsonEncodableResponse(manager.createExternalURLTask(body), status: .created)
+    }
+
     app.get("api", "downloads", ":id") { req -> Response in
         try requireAccess(req, config: config)
         let accountHash = try requireAccountHash(req)
@@ -167,11 +179,19 @@ private func registerPackageRoutes(_ app: Application, config: WebConfig, manage
     app.get("api", "packages", ":id", "file") { req -> Response in
         try requireAccess(req, config: config)
         let task = try completedPackage(req, manager: manager)
-        let name = sanitizeFilename(task.software.name)
         let version = sanitizeFilename(task.software.version)
+        let displayName = "\(task.software.name)-\(version).ipa"
+        let fallbackName = "\(task.software.bundleID)-\(version).ipa"
         let response = req.fileio.streamFile(at: task.filePath ?? "")
-        response.headers.replaceOrAdd(name: "Content-Disposition", value: "attachment; filename=\"\(name)-\(version).ipa\"")
+        response.headers.replaceOrAdd(
+            name: "Content-Disposition",
+            value: attachmentContentDisposition(displayName: displayName, fallbackName: fallbackName)
+        )
         response.headers.replaceOrAdd(name: "Content-Type", value: "application/octet-stream")
+        if let sha256 = task.sha256 {
+            response.headers.replaceOrAdd(name: "X-Artifact-SHA256", value: sha256)
+            response.headers.replaceOrAdd(name: "ETag", value: "\"sha256:\(sha256)\"")
+        }
         return response
     }
 
@@ -185,10 +205,14 @@ private func registerPackageRoutes(_ app: Application, config: WebConfig, manage
         guard pathInPackages(simulatorURL.path, manager: manager) else {
             throw Abort(.forbidden, reason: "Access denied")
         }
-        let name = sanitizeFilename(task.software.name)
         let version = sanitizeFilename(task.software.version)
+        let displayName = "\(task.software.name)-\(version)-Simulator.ipa"
+        let fallbackName = "\(task.software.bundleID)-\(version)-Simulator.ipa"
         let response = req.fileio.streamFile(at: simulatorURL.path)
-        response.headers.replaceOrAdd(name: "Content-Disposition", value: "attachment; filename=\"\(name)-\(version)-Simulator.ipa\"")
+        response.headers.replaceOrAdd(
+            name: "Content-Disposition",
+            value: attachmentContentDisposition(displayName: displayName, fallbackName: fallbackName)
+        )
         response.headers.replaceOrAdd(name: "Content-Type", value: "application/octet-stream")
         return response
     }

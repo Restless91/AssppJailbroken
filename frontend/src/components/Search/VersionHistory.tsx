@@ -7,11 +7,21 @@ import { useAccounts } from "../../hooks/useAccounts";
 import { useDownloadAction } from "../../hooks/useDownloadAction";
 import { useSettingsStore } from "../../store/settings";
 import { useToastStore } from "../../store/toast";
-import { getVersionMetadata, listVersions } from "../../api/apple";
+import {
+  getVersionMetadata,
+  listHistoricalVersions,
+  listVersions,
+  type HistoricalVersionListResponse,
+  type HistoricalVersionRecord,
+} from "../../api/apple";
 import { getAccountOptionLabel } from "../../utils/accountDisplay";
 import { getErrorMessage } from "../../utils/error";
 import { storeIdToCountry } from "../../apple/config";
 import type { Software, VersionMetadata } from "../../types";
+
+const PROVIDERS = ["auto", "timbrd", "agzy", "bilin", "apple"] as const;
+const CACHE_PREFIX = "asspp:historical-versions:";
+const CACHE_TTL = 6 * 60 * 60 * 1000;
 
 export default function VersionHistory() {
   const { appId } = useParams<{ appId: string }>();
@@ -35,6 +45,12 @@ export default function VersionHistory() {
     [accounts, country],
   );
   const [versions, setVersions] = useState<string[]>([]);
+  const [records, setRecords] = useState<Record<string, HistoricalVersionRecord>>({});
+  const [provider, setProvider] = useState<(typeof PROVIDERS)[number]>("auto");
+  const [resolvedProvider, setResolvedProvider] = useState("");
+  const [providerErrors, setProviderErrors] = useState<string[]>([]);
+  const [notice, setNotice] = useState("");
+  const [manualVersionId, setManualVersionId] = useState("");
   const [versionMeta, setVersionMeta] = useState<
     Record<string, VersionMetadata>
   >({});
@@ -55,12 +71,43 @@ export default function VersionHistory() {
 
   const account = filteredAccounts.find((a) => a.email === selectedAccount);
 
-  async function handleLoadVersions() {
-    if (!account || !app) return;
+  function applyHistory(result: HistoricalVersionListResponse, cached = false) {
+    setRecords(Object.fromEntries(result.records.map((record) => [record.versionId, record])));
+    setVersions(result.records.map((record) => record.versionId));
+    setResolvedProvider(result.provider);
+    setProviderErrors(result.errors ?? []);
+    setNotice(t(cached || result.cached ? "search.versions.cached" : "search.versions.loaded", {
+      count: result.records.length,
+      provider: providerLabel(result.provider),
+    }));
+  }
+
+  async function handleLoadVersions(selectedProvider = provider, force = false) {
+    if (!app) return;
     setLoading(true);
+    setProviderErrors([]);
+    setNotice("");
     try {
+      if (selectedProvider !== "apple") {
+        const cached = readCache(app.id, selectedProvider);
+        if (cached && !force) {
+          applyHistory(cached, true);
+          return;
+        }
+        const history = await listHistoricalVersions(app, selectedProvider);
+        if (history.records.length > 0) {
+          writeCache(app.id, selectedProvider, history);
+          applyHistory(history);
+          return;
+        }
+        setProviderErrors(history.errors ?? []);
+      }
+      if (!account) throw new Error(t("search.versions.accountRequired"));
       const result = await listVersions(account, app);
-      setVersions(result.versions);
+      setRecords({});
+      setVersions(sortVersionIds(result.versions));
+      setResolvedProvider("apple");
+      setNotice(t("search.versions.appleLoaded", { count: result.versions.length }));
       await updateAccount(result.account);
     } catch (e) {
       addToast(getErrorMessage(e, t("search.versions.loadFailed")), "error");
@@ -68,6 +115,12 @@ export default function VersionHistory() {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (app) void handleLoadVersions("auto");
+    // Initial history lookup is keyed only by the selected app.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [app?.id]);
 
   async function handleLoadMeta(versionId: string) {
     if (!account || !app || versionMeta[versionId]) return;
@@ -84,7 +137,10 @@ export default function VersionHistory() {
   }
 
   async function handleDownloadVersion(versionId: string) {
-    if (!account || !app) return;
+    if (!account || !app) {
+      addToast(t("search.versions.accountRequired"), "error");
+      return;
+    }
     setDownloadingVersion(versionId);
     try {
       await startDownload(account, app, versionId);
@@ -142,7 +198,7 @@ export default function VersionHistory() {
                 </select>
               </div>
               <button
-                onClick={handleLoadVersions}
+                onClick={() => handleLoadVersions()}
                 disabled={loading || !account}
                 className="btn btn-primary"
               >
@@ -154,28 +210,83 @@ export default function VersionHistory() {
           )
         )}
 
+        <div className="card card-pad space-y-4">
+          <div>
+            <label className="field-label">{t("search.versions.source")}</label>
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+              {PROVIDERS.map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  disabled={loading}
+                  onClick={() => {
+                    setProvider(value);
+                    void handleLoadVersions(value);
+                  }}
+                  className={`btn btn-sm ${provider === value ? "btn-primary" : "btn-ghost"}`}
+                >
+                  {providerLabel(value)}
+                </button>
+              ))}
+            </div>
+          </div>
+          {resolvedProvider && (
+            <p className="text-[12px] text-muted">
+              {t("search.versions.currentSource", { provider: providerLabel(resolvedProvider) })}
+            </p>
+          )}
+          {notice && <div className="alert" data-tone="success">{notice}</div>}
+          {providerErrors.length > 0 && (
+            <div className="alert" data-tone="warning">
+              {t("search.versions.partialFailure")}: {providerErrors.slice(0, 3).join("；")}
+            </div>
+          )}
+          {provider !== "apple" && versions.length > 0 && (
+            <button type="button" className="btn btn-ghost btn-sm" disabled={loading} onClick={() => handleLoadVersions(provider, true)}>
+              {t("search.versions.refresh")}
+            </button>
+          )}
+        </div>
+
+        <div className="card card-pad">
+          <label className="field-label">{t("search.versions.manualId")}</label>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input className="field-input flex-1" inputMode="numeric" value={manualVersionId} onChange={(event) => setManualVersionId(event.target.value)} placeholder="888611633" />
+            <button className="btn btn-primary" disabled={!manualVersionId.trim() || downloadingVersion !== null} onClick={() => handleDownloadVersion(manualVersionId.trim())}>
+              {t("search.versions.download")}
+            </button>
+          </div>
+        </div>
+
         {versions.length > 0 && (
           <div className="card divide-y divide-border overflow-hidden">
             {versions.map((versionId) => {
               const meta = versionMeta[versionId];
+              const record = records[versionId];
               const isLoadingMeta = loadingMeta[versionId];
               const isDownloading = downloadingVersion === versionId;
 
               return (
                 <div
                   key={versionId}
-                  className="flex items-center justify-between p-4"
+                  className="flex items-center justify-between gap-3 p-4"
                 >
                   <div>
                     <p className="text-[13.5px] font-medium text-ink">
-                      {meta ? `v${meta.displayVersion}` : `ID: ${versionId}`}
+                      {record?.version || meta?.displayVersion
+                        ? `v${record?.version ?? meta?.displayVersion}`
+                        : `ID: ${versionId}`}
                     </p>
-                    {meta && (
+                    <p className="break-all text-[12px] text-muted">
+                      {t("search.versions.versionId")}: {versionId}
+                      {record?.sizeText ? ` · ${record.sizeText}` : ""}
+                    </p>
+                    {meta?.releaseDate && !record && (
                       <p className="text-[12px] text-muted">
                         {new Date(meta.releaseDate).toLocaleDateString()}
                       </p>
                     )}
-                    {!meta && !isLoadingMeta && (
+                    {!record?.version && !meta && !isLoadingMeta && account && (
                       <button
                         onClick={() => handleLoadMeta(versionId)}
                         className="py-1 text-[12px] text-link"
@@ -206,4 +317,36 @@ export default function VersionHistory() {
       </div>
     </PageContainer>
   );
+}
+
+function providerLabel(provider: string) {
+  return provider === "auto" ? "Auto" : provider === "apple" ? "Apple" : provider[0].toUpperCase() + provider.slice(1);
+}
+
+function sortVersionIds(ids: string[]) {
+  return [...ids].sort((a, b) => Number(b) - Number(a));
+}
+
+function cacheKey(appId: number | string, provider: string) {
+  return `${CACHE_PREFIX}${appId}:${provider}`;
+}
+
+function readCache(appId: number | string, provider: string): HistoricalVersionListResponse | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(cacheKey(appId, provider)) ?? "null") as
+      | { savedAt: number; result: HistoricalVersionListResponse }
+      | null;
+    if (!value || Date.now() - value.savedAt > CACHE_TTL) return null;
+    return value.result;
+  } catch {
+    return null;
+  }
+}
+
+function writeCache(appId: number | string, provider: string, result: HistoricalVersionListResponse) {
+  try {
+    localStorage.setItem(cacheKey(appId, provider), JSON.stringify({ savedAt: Date.now(), result }));
+  } catch {
+    // History remains usable when storage is unavailable.
+  }
 }

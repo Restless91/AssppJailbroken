@@ -91,6 +91,16 @@
       "loadDetails": "Load details",
       "download": "Download",
       "downloading": "Downloading..."
+      ,"source": "History source"
+      ,"currentSource": "Current source: {{provider}}"
+      ,"loaded": "Loaded {{count}} versions from {{provider}}."
+      ,"cached": "Loaded {{count}} cached versions from {{provider}}."
+      ,"appleLoaded": "Loaded {{count}} version IDs from the Apple account."
+      ,"partialFailure": "Some sources were unavailable; other sources were tried automatically"
+      ,"refresh": "Force refresh"
+      ,"manualId": "Enter version ID manually"
+      ,"versionId": "Version ID"
+      ,"accountRequired": "An Apple ID for this region is required to download historical versions"
     }
   },
   "accounts": {
@@ -169,6 +179,12 @@
     },
     "item": {
       "viewPackage": "View Package"
+    },
+    "verification": {
+      "title": "Decryption Verification",
+      "result": "Mach-O verification",
+      "machO": "Verified {{verified}}/{{total}} Mach-O files",
+      "errorCode": "Error code"
     },
     "add": {
       "title": "New Download",

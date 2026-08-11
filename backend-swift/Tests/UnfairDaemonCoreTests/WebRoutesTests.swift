@@ -3,6 +3,16 @@ import Foundation
 import XCTVapor
 
 final class WebRoutesTests: XCTestCase {
+    func testAttachmentContentDispositionPreservesUnicodeApplicationName() {
+        XCTAssertEqual(
+            attachmentContentDisposition(
+                displayName: "微信-8.0.75.ipa",
+                fallbackName: "com.tencent.xin-8.0.75.ipa"
+            ),
+            "attachment; filename=\"com.tencent.xin-8.0.75.ipa\"; filename*=UTF-8''%E5%BE%AE%E4%BF%A1-8.0.75.ipa"
+        )
+    }
+
     func testAuthSettingsAndStaticRoutesShareOneVaporService() throws {
         let context = try WebTestContext()
         defer { context.cleanup() }
@@ -61,6 +71,32 @@ final class WebRoutesTests: XCTestCase {
         }
     }
 
+    func testHistoricalVersionsAppleProviderReturnsFallbackSignal() throws {
+        let context = try WebTestContext()
+        defer { context.cleanup() }
+        let app = Application(.testing)
+        defer { app.shutdown() }
+        let manager = try WebDownloadManager(config: context.config)
+        try webRoutes(app, config: context.config, manager: manager)
+        let software = Software(
+            id: 414478124, bundleID: "com.tencent.xin", name: "微信", version: "8.0.75",
+            price: 0, artistName: "", sellerName: "", description: "",
+            averageUserRating: 0, userRatingCount: 0, artworkUrl: "", screenshotUrls: [],
+            minimumOsVersion: "15.0", fileSizeBytes: nil, releaseDate: "",
+            releaseNotes: nil, formattedPrice: nil, primaryGenreName: ""
+        )
+
+        try app.testable().test(.POST, "/api/apple/historical-versions", beforeRequest: { request in
+            try request.content.encode(AppleHistoricalVersionsRequest(software: software, provider: "apple"))
+        }) { response in
+            XCTAssertEqual(response.status, .ok)
+            let result = try response.content.decode(AppleHistoricalVersionsResponse.self)
+            XCTAssertEqual(result.provider, "apple")
+            XCTAssertTrue(result.records.isEmpty)
+            XCTAssertTrue(result.errors.isEmpty)
+        }
+    }
+
     func testAccessTokenQueryAuthorizesBrowserDownloads() throws {
         let context = try WebTestContext(accessPasswordHash: "token")
         defer { context.cleanup() }
@@ -76,6 +112,60 @@ final class WebRoutesTests: XCTestCase {
 
         try app.testable().test(.GET, "/api/settings?accessToken=token") { response in
             XCTAssertEqual(response.status, .ok)
+        }
+    }
+
+    func testIStoreOSNodeAndAccountCompatibilityRoutes() throws {
+        let context = try WebTestContext()
+        defer { context.cleanup() }
+        let app = Application(.testing)
+        defer { app.shutdown() }
+        let manager = try WebDownloadManager(config: context.config)
+        try routes(app, config: context.config)
+        try webRoutes(app, config: context.config, manager: manager)
+
+        try app.testable().test(.GET, "/api/node/info") { response in
+            XCTAssertEqual(response.status, .ok)
+            let node = try response.content.decode(NodeInfoResponse.self)
+            XCTAssertEqual(node.service, "unfaird")
+            XCTAssertTrue(node.capabilities.externalURLDownload)
+            XCTAssertTrue(node.capabilities.defaultAppleAccount)
+            XCTAssertFalse(node.capabilities.structuredDecryptEvents)
+        }
+        try app.testable().test(.GET, "/api/account/default/status") { response in
+            XCTAssertEqual(response.status, .ok)
+            let status = try response.content.decode(DefaultAppleAccountStatusResponse.self)
+            XCTAssertFalse(status.configured)
+        }
+    }
+
+    func testExternalURLDownloadRejectsPublicHosts() throws {
+        let context = try WebTestContext()
+        defer { context.cleanup() }
+        let app = Application(.testing)
+        defer { app.shutdown() }
+        let manager = try WebDownloadManager(config: context.config)
+        try webRoutes(app, config: context.config, manager: manager)
+        let software = Software(
+            id: 1, bundleID: "com.example.app", name: "Example", version: "1.0",
+            price: 0, artistName: "", sellerName: "", description: "",
+            averageUserRating: 0, userRatingCount: 0, artworkUrl: "", screenshotUrls: [],
+            minimumOsVersion: "15.0", fileSizeBytes: nil, releaseDate: "",
+            releaseNotes: nil, formattedPrice: nil, primaryGenreName: ""
+        )
+
+        try app.testable().test(.POST, "/api/downloads/external-url", beforeRequest: { request in
+            try request.content.encode(CreateExternalURLDownloadRequest(
+                software: software,
+                accountHash: "0123456789abcdef",
+                sourceURL: "https://example.com/app.ipa",
+                sinfs: [],
+                iTunesMetadata: nil,
+                forceExtensionDecryption: nil
+            ))
+        }) { response in
+            XCTAssertEqual(response.status, .badRequest)
+            XCTAssertTrue(response.body.string.contains("private LAN host"))
         }
     }
 }

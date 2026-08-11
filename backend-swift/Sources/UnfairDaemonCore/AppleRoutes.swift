@@ -2,6 +2,17 @@ import Foundation
 import Vapor
 
 func registerAppleProtocolRoutes(_ app: Application, config: WebConfig, manager: WebDownloadManager) {
+    app.get("api", "account", "default", "status") { req -> Response in
+        try requireAccess(req, config: config)
+        return try jsonEncodableResponse(DefaultAppleAccountStore.status(config: config))
+    }
+
+    app.post("api", "account", "default", "import") { req -> Response in
+        try requireAccess(req, config: config)
+        let body = try req.content.decode(AppleAccountResponse.self)
+        return try jsonEncodableResponse(DefaultAppleAccountStore.importAccount(body.account, config: config))
+    }
+
     app.post("api", "apple", "authenticate") { req -> EventLoopFuture<Response> in
         try requireAccess(req, config: config)
         return try appleProtocolFuture(for: req, as: AppleAuthenticateRequest.self) { body in
@@ -23,6 +34,23 @@ func registerAppleProtocolRoutes(_ app: Application, config: WebConfig, manager:
         return try appleProtocolFuture(for: req, as: AppleVersionListRequest.self) { body in
             let result = try await AppleProtocolService.listVersions(account: body.account, software: body.software)
             return try jsonEncodableResponse(AppleVersionListResponse(account: result.account, versions: result.versions))
+        }
+    }
+
+    app.post("api", "apple", "historical-versions") { req -> EventLoopFuture<Response> in
+        try requireAccess(req, config: config)
+        return try appleProtocolFuture(for: req, as: AppleHistoricalVersionsRequest.self) { body in
+            let result = await HistoricalVersionProvider.fetch(
+                appId: String(body.software.id),
+                provider: body.provider
+            )
+            return try jsonEncodableResponse(AppleHistoricalVersionsResponse(
+                provider: result.provider,
+                records: result.records,
+                versions: result.records.map(\.versionId),
+                errors: result.errors,
+                cached: result.cached
+            ))
         }
     }
 
@@ -60,6 +88,41 @@ func registerAppleProtocolRoutes(_ app: Application, config: WebConfig, manager:
                 iTunesMetadata: result.output.iTunesMetadata
             ))
             return try jsonEncodableResponse(AppleDownloadResponse(account: result.account, task: task), status: .created)
+        }
+    }
+
+    app.post("api", "downloads", "apple", "default", "materials") { req -> EventLoopFuture<Response> in
+        try requireAccess(req, config: config)
+        return try appleProtocolFuture(for: req, as: AppleDefaultDownloadRequest.self) { body in
+            var (account, accountHash) = try DefaultAppleAccountStore.readAccount(config: config)
+            if (body.software.price ?? 0) <= 0 {
+                do {
+                    account = try await AppleProtocolService.purchase(account: account, software: body.software)
+                    try DefaultAppleAccountStore.updateAccount(account, config: config)
+                    (_, accountHash) = try DefaultAppleAccountStore.readAccount(config: config)
+                } catch {
+                    let message = String(describing: error).lowercased()
+                    if message.contains("already purchased") == false && message.contains("5002") == false {
+                        throw error
+                    }
+                }
+            }
+            let result = try await AppleProtocolService.downloadInfo(
+                account: account,
+                software: body.software,
+                externalVersionId: body.externalVersionId
+            )
+            try DefaultAppleAccountStore.updateAccount(result.account, config: config)
+            (_, accountHash) = try DefaultAppleAccountStore.readAccount(config: config)
+            var software = body.software
+            software.version = result.output.bundleShortVersionString
+            return try jsonEncodableResponse(AppleDefaultDownloadMaterialsResponse(
+                accountHash: accountHash,
+                software: software,
+                downloadURL: result.output.downloadURL,
+                sinfs: result.output.sinfs,
+                iTunesMetadata: result.output.iTunesMetadata
+            ))
         }
     }
 }

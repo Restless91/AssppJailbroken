@@ -6,6 +6,7 @@ import Vapor
 struct DecryptService {
     typealias ProcessRunner = (String, [String], URL, URL?, Int?) throws -> PosixSpawnResult
     typealias JobScheduler = (@escaping () -> Void) -> Void
+    typealias PackageVerifier = (URL, URL) throws -> Void
 
     struct Dependencies {
         let workDirectory: () -> URL
@@ -16,6 +17,7 @@ struct DecryptService {
         let runProcess: ProcessRunner
         let reserveTask: (URL, Int64) throws -> (() -> Void)
         let scheduleJob: JobScheduler
+        let verifyPackage: PackageVerifier
 
         static let live = Dependencies(
             workDirectory: { DecryptService.workDirectory() },
@@ -39,16 +41,22 @@ struct DecryptService {
                 )
                 return { reservation.release() }
             },
-            scheduleJob: { work in DecryptService.decryptQueue.async(execute: work) }
+            scheduleJob: { work in DecryptService.decryptQueue.async(execute: work) },
+            verifyPackage: { outputURL, sourceURL in
+                _ = try DecryptVerifier.verify(
+                    outputURL: outputURL,
+                    sourceURL: sourceURL,
+                    allowEncryptedExtensions: true
+                )
+            }
         )
     }
 
     static let maxUploadBytes: Int64 = 8 * 1024 * 1024 * 1024
     private static let downloadTTLSeconds = 3600
     private static let cleanupIntervalSeconds = 60
-    private static let diskReserveBytes: Int64 = 16 * 1024 * 1024 * 1024
+    private static let remoteDownloadTimeoutSeconds = 15 * 60
     private static let workDirectoryPath = "/var/tmp/unfaird/jobs"
-    private static let runnerTimeoutSeconds = 15 * 60
     private static let cleanupLock = NSLock()
     private static let decryptQueue = DispatchQueue(label: "wiki.qaq.unfaird.decrypt-queue")
     private static var cleanupTimer: DispatchSourceTimer?
@@ -196,16 +204,16 @@ struct DecryptService {
                 in: job.directoryURL
             )
 
-            let releaseReservation = try dependencies.reserveTask(
-                dependencies.workDirectory(),
-                Self.diskReserveBytes
-            )
-            defer { releaseReservation() }
-
             let packageInputURL = try packageInputURL(
                 from: inputSource,
                 packageWorkingDirectory: packageWorkingDirectory
             )
+            let packageSize = ((try? FileManager.default.attributesOfItem(atPath: packageInputURL.path)[.size]) as? NSNumber)?.int64Value ?? 0
+            let releaseReservation = try dependencies.reserveTask(
+                dependencies.workDirectory(),
+                StorageBudget.requiredBytes(packageSize: packageSize)
+            )
+            defer { releaseReservation() }
             let sandboxProfileURL = try dependencies.sandboxProfileURL(job.directoryURL)
             let result = try runDecryptRunner(
                 for: job,
@@ -213,7 +221,7 @@ struct DecryptService {
                 packageWorkingDirectory: packageWorkingDirectory,
                 sandboxProfileURL: sandboxProfileURL
             )
-            try finalize(job: job, result: result)
+            try finalize(job: job, inputURL: packageInputURL, result: result)
         } catch {
             markFailed(job: job, exit: nil, error: errorDescription(error))
         }
@@ -302,26 +310,32 @@ struct DecryptService {
         packageWorkingDirectory: URL,
         sandboxProfileURL: URL?
     ) throws -> PosixSpawnResult {
-        let arguments = [
-            "package",
-            "--input", inputURL.path,
-            "--output", job.outputURL.path,
-            "--working-directory", packageWorkingDirectory.path,
-            "--verbose",
-        ]
+        let currentExecutable = dependencies.currentExecutablePath()
+        let runnerPath = PackageRunnerResolver.executablePath(
+            currentExecutablePath: currentExecutable
+        )
         return try dependencies.runProcess(
-            dependencies.currentExecutablePath(),
-            arguments,
+            runnerPath,
+            PackageRunnerResolver.arguments(
+                inputPath: inputURL.path,
+                outputPath: job.outputURL.path,
+                workingDirectoryPath: packageWorkingDirectory.path,
+                forceExtensionDecryption: false,
+                supportsForceExtensions: runnerPath != currentExecutable
+            ),
             job.directoryURL,
             sandboxProfileURL,
-            Self.runnerTimeoutSeconds
+            DecryptTimeoutPolicy.seconds(
+                fileSize: ((try? FileManager.default.attributesOfItem(atPath: inputURL.path)[.size]) as? NSNumber)?.int64Value ?? 0
+            )
         )
     }
 
-    private func finalize(job: DecryptJob, result: PosixSpawnResult) throws {
+    private func finalize(job: DecryptJob, inputURL: URL, result: PosixSpawnResult) throws {
         let exit = exit(for: result, job: job)
         if result.exitCode == 0,
            FileManager.default.fileExists(atPath: job.outputURL.path) {
+            try dependencies.verifyPackage(job.outputURL, inputURL)
             try writeMetadata(
                 job.metadata(
                     status: .succeeded,
@@ -552,7 +566,7 @@ struct DecryptService {
         let delegate = LimitedDownloadDelegate(destination: destination, maxBytes: Self.maxUploadBytes)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 60
-        configuration.timeoutIntervalForResource = TimeInterval(Self.runnerTimeoutSeconds)
+        configuration.timeoutIntervalForResource = TimeInterval(Self.remoteDownloadTimeoutSeconds)
         let delegateQueue = OperationQueue()
         delegateQueue.maxConcurrentOperationCount = 1
         let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: delegateQueue)
@@ -584,6 +598,9 @@ struct DecryptService {
     private func errorDescription(_ error: Error) -> String {
         if let abort = error as? AbortError {
             return abort.reason
+        }
+        if let localized = error as? LocalizedError, let description = localized.errorDescription {
+            return description
         }
         return String(describing: error)
     }
@@ -771,33 +788,44 @@ private final class StreamingDecryptUploadReceiver {
     }
 }
 
-private final class DecryptTaskGate {
+final class DecryptTaskGate {
     static let shared = DecryptTaskGate()
 
     private let lock = NSLock()
-    private var runningTasks = 0
+    private let availableBytes: (URL) throws -> Int64
+    private var reservedBytes: Int64 = 0
+
+    init(availableBytes: @escaping (URL) throws -> Int64 = DecryptTaskGate.fileSystemAvailableBytes) {
+        self.availableBytes = availableBytes
+    }
 
     func reserve(workDirectory: URL, bytesPerTask: Int64) throws -> DecryptTaskReservation {
         lock.lock()
         defer { lock.unlock() }
 
-        let available = try Self.availableBytes(at: workDirectory)
-        let required = Int64(runningTasks + 1) * bytesPerTask
+        let available = try availableBytes(workDirectory)
+        let (required, overflow) = reservedBytes.addingReportingOverflow(bytesPerTask)
+        guard overflow == false else {
+            throw Abort(.insufficientStorage, reason: "decrypt storage reservation overflow")
+        }
         guard available >= required else {
-            throw Abort(.insufficientStorage, reason: "need 16GB free per running decrypt task")
+            throw Abort(
+                .insufficientStorage,
+                reason: "insufficient storage: need \(required) bytes, available \(available) bytes"
+            )
         }
 
-        runningTasks += 1
-        return DecryptTaskReservation(gate: self)
+        reservedBytes = required
+        return DecryptTaskReservation(gate: self, bytes: bytesPerTask)
     }
 
-    fileprivate func release() {
+    fileprivate func release(bytes: Int64) {
         lock.lock()
-        runningTasks = max(0, runningTasks - 1)
+        reservedBytes = max(0, reservedBytes - bytes)
         lock.unlock()
     }
 
-    private static func availableBytes(at url: URL) throws -> Int64 {
+    private static func fileSystemAvailableBytes(at url: URL) throws -> Int64 {
         var stats = statfs()
         guard statfs(url.path, &stats) == 0 else {
             throw Abort(.internalServerError, reason: "free space check failed: \(String(cString: strerror(errno)))")
@@ -806,15 +834,17 @@ private final class DecryptTaskGate {
     }
 }
 
-private struct DecryptTaskReservation {
+struct DecryptTaskReservation {
     private weak var gate: DecryptTaskGate?
+    private let bytes: Int64
 
-    fileprivate init(gate: DecryptTaskGate) {
+    fileprivate init(gate: DecryptTaskGate, bytes: Int64) {
         self.gate = gate
+        self.bytes = bytes
     }
 
-    fileprivate func release() {
-        gate?.release()
+    func release() {
+        gate?.release(bytes: bytes)
     }
 }
 

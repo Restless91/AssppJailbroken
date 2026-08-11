@@ -32,8 +32,14 @@ POST /api/downloads/apple
 
 ## Build
 
+Before every formal release, increment the `Version` field in
+`backend-swift/control`. Never reuse a previously published version number.
+The version becomes part of the deb filename, so releases can coexist in
+`backend-swift/debs/`.
+
 ```bash
 make build
+make list-releases
 ```
 
 `make build` creates one complete rootless deb containing:
@@ -48,6 +54,18 @@ Install the generated package on a jailbroken iPhone:
 ```bash
 make install DEVICE_HOST=root@<device-host>
 ```
+
+Install or roll back to a retained version without rebuilding it:
+
+```bash
+make install-version VERSION=0.1.2 DEVICE_HOST=root@<device-host>
+```
+
+`install-version` passes `--allow-downgrades` to APT, so an older retained deb
+can replace a newer installed release. `make clean-package` only removes build
+intermediates and deliberately preserves `backend-swift/debs/*.deb`. Release
+packages should also be uploaded to the corresponding GitHub Release or other
+durable package archive; local files alone are not a backup.
 
 The same root install target accepts Theos device variables:
 

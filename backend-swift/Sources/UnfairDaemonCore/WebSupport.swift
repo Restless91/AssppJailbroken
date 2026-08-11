@@ -147,6 +147,13 @@ func sanitizeFilename(_ value: String) -> String {
     return String(value.prefix(200))
 }
 
+func attachmentContentDisposition(displayName: String, fallbackName: String) -> String {
+    let fallback = sanitizeFilename(fallbackName)
+    let attrCharacters = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$&+-.^_`|~")
+    let encoded = displayName.addingPercentEncoding(withAllowedCharacters: attrCharacters) ?? fallback
+    return "attachment; filename=\"\(fallback)\"; filename*=UTF-8''\(encoded)"
+}
+
 func formatSpeed(bytesPerSecond: Double) -> String {
     if bytesPerSecond < 1024 {
         return String(format: "%.0f B/s", bytesPerSecond)

@@ -5,6 +5,7 @@ final class WebDownloadManager {
     private final class TaskRecord {
         var task: DownloadTask
         var sessionTask: URLSessionTask?
+        var processCancellation: PosixSpawnCancellation?
 
         init(task: DownloadTask) {
             self.task = task
@@ -81,8 +82,14 @@ final class WebDownloadManager {
         }
     }
 
-    func createTask(_ request: CreateDownloadRequest) throws -> DownloadTask {
-        try validateDownloadURL(request.downloadURL)
+    func createTask(
+        _ request: CreateDownloadRequest,
+        validateAppleURL: Bool = true,
+        forceExtensionDecryption: Bool? = nil
+    ) throws -> DownloadTask {
+        if validateAppleURL {
+            try validateDownloadURL(request.downloadURL)
+        }
         _ = try sanitizePathSegment(request.accountHash, label: "accountHash")
         _ = try sanitizePathSegment(request.software.bundleID, label: "bundleID")
         _ = try sanitizePathSegment(request.software.version, label: "version")
@@ -112,7 +119,8 @@ final class WebDownloadManager {
             logs: nil,
             filePath: nil,
             createdAt: currentTimestampString(),
-            hasFile: nil
+            hasFile: nil,
+            forceExtensionDecryption: forceExtensionDecryption
         )
         var loggedTask = task
         appendLogLocked(to: &loggedTask, phase: "download", message: "queued \(request.software.name) \(request.software.version)")
@@ -125,6 +133,17 @@ final class WebDownloadManager {
         return self.task(id: id) ?? loggedTask
     }
 
+    func createExternalURLTask(_ request: CreateExternalURLDownloadRequest) throws -> DownloadTask {
+        try validateExternalSourceURL(request.sourceURL)
+        return try createTask(CreateDownloadRequest(
+            software: request.software,
+            accountHash: request.accountHash,
+            downloadURL: request.sourceURL,
+            sinfs: request.sinfs,
+            iTunesMetadata: request.iTunesMetadata
+        ), validateAppleURL: false, forceExtensionDecryption: request.forceExtensionDecryption)
+    }
+
     func deleteTask(id: String) -> Bool {
         lock.lock()
         guard let record = tasks[id] else {
@@ -132,6 +151,7 @@ final class WebDownloadManager {
             return false
         }
         record.sessionTask?.cancel()
+        record.processCancellation?.cancel()
         let filePath = record.task.filePath
         tasks.removeValue(forKey: id)
         lock.unlock()
@@ -144,12 +164,14 @@ final class WebDownloadManager {
     func pauseTask(id: String) -> Bool {
         lock.lock()
         guard let record = tasks[id],
-              record.task.status == DownloadStatus.downloading.rawValue
+              record.task.status == DownloadStatus.downloading.rawValue ||
+                record.task.status == DownloadStatus.decrypting.rawValue
         else {
             lock.unlock()
             return false
         }
         record.sessionTask?.cancel()
+        record.processCancellation?.cancel()
         record.sessionTask = nil
         record.task.status = DownloadStatus.paused.rawValue
         record.task.speed = "0 B/s"
@@ -236,6 +258,7 @@ final class WebDownloadManager {
             record.task.progress = 0
             record.task.speed = "0 B/s"
             record.task.error = nil
+            record.task.errorCode = nil
             record.task.filePath = try taskFileURL(for: record.task).path
             appendLogLocked(to: &record.task, phase: "download", message: "starting IPA download")
         } catch {
@@ -250,6 +273,7 @@ final class WebDownloadManager {
         let filePath = record.task.filePath ?? ""
         let sinfs = record.task.sinfs ?? []
         let iTunesMetadata = record.task.iTunesMetadata
+        let requestBundleID = record.task.software.bundleID
         lock.unlock()
         persistTasks()
 
@@ -283,7 +307,18 @@ final class WebDownloadManager {
                     self.appendLogLocked(to: &task, phase: "decrypt", message: "running unfaird package processor")
                 }
                 self.persistTasks()
+                let packageSize = ((try? FileManager.default.attributesOfItem(atPath: filePath)[.size]) as? NSNumber)?.int64Value ?? 0
+                let storageReservation = try DecryptTaskGate.shared.reserve(
+                    workDirectory: self.packagesDirectory,
+                    bytesPerTask: StorageBudget.requiredBytes(packageSize: packageSize)
+                )
+                defer { storageReservation.release() }
+                guard let bundleLease = BundleTaskGate.shared.tryAcquire(bundleID: requestBundleID) else {
+                    throw Abort(.conflict, reason: "another task is processing this bundle")
+                }
+                defer { bundleLease.release() }
                 try self.decryptInPlace(URL(fileURLWithPath: filePath), taskID: id)
+                let sha256 = try ArtifactDigest.sha256(of: URL(fileURLWithPath: filePath))
 
                 self.updateTask(id: id) { task in
                     task.status = DownloadStatus.completed.rawValue
@@ -292,7 +327,10 @@ final class WebDownloadManager {
                     task.downloadURL = nil
                     task.sinfs = nil
                     task.iTunesMetadata = nil
+                    task.sha256 = sha256
+                    task.errorCode = nil
                     task.sessionFieldsCleared()
+                    self.appendLogLocked(to: &task, phase: "verify", message: "sha256 \(sha256)")
                     self.appendLogLocked(to: &task, phase: "download", message: "completed")
                 }
                 self.persistTasks()
@@ -302,10 +340,12 @@ final class WebDownloadManager {
                     return
                 }
                 let failureMessage = "\(stage) failed: \(self.errorDescription(error))"
+                let failureCode = DecryptFailureClassifier.code(for: error, message: failureMessage)
                 let failurePhase = self.logPhase(forStage: stage)
                 self.updateTask(id: id) { task in
                     task.status = DownloadStatus.failed.rawValue
                     task.error = failureMessage
+                    task.errorCode = failureCode
                     task.speed = "0 B/s"
                     task.sessionFieldsCleared()
                     self.appendLogLocked(to: &task, phase: failurePhase, message: "failed: \(self.errorDescription(error))")
@@ -355,6 +395,21 @@ final class WebDownloadManager {
     }
 
     private func decryptInPlace(_ ipaURL: URL, taskID: String) throws {
+        let cancellation = PosixSpawnCancellation()
+        lock.lock()
+        guard tasks[taskID]?.task.status == DownloadStatus.decrypting.rawValue else {
+            lock.unlock()
+            throw Abort(.conflict, reason: "decrypt cancelled")
+        }
+        tasks[taskID]?.processCancellation = cancellation
+        lock.unlock()
+        defer {
+            lock.lock()
+            if tasks[taskID]?.processCancellation === cancellation {
+                tasks[taskID]?.processCancellation = nil
+            }
+            lock.unlock()
+        }
         let decryptID = UUID()
         let jobsRoot = URL(fileURLWithPath: "/var/tmp/unfaird/jobs", isDirectory: true)
         let jobDirectory = jobsRoot.appendingPathComponent(decryptID.uuidString, isDirectory: true)
@@ -371,18 +426,30 @@ final class WebDownloadManager {
         }
 
         let sandboxProfileURL = try PackageRunnerSandbox.writeProfile(jobDirectory: jobDirectory)
+        let fileSize = ((try? FileManager.default.attributesOfItem(atPath: ipaURL.path)[.size]) as? NSNumber)?.int64Value ?? 0
+        let timeoutSeconds = DecryptTimeoutPolicy.seconds(fileSize: fileSize)
+        appendLog(id: taskID, phase: "decrypt", message: "timeout budget \(timeoutSeconds) seconds")
+        let currentRunnerPath = currentExecutablePath()
+        let runnerPath = PackageRunnerResolver.executablePath(
+            currentExecutablePath: currentRunnerPath
+        )
+        lock.lock()
+        let forceExtensionDecryption = tasks[taskID]?.task.forceExtensionDecryption == true
+        lock.unlock()
+        appendLog(id: taskID, phase: "decrypt", message: "package runner: \(runnerPath)")
         let result = try PosixSpawn.run(
-            executablePath: currentExecutablePath(),
-            arguments: [
-                "package",
-                "--input", ipaURL.path,
-                "--output", outputURL.path,
-                "--working-directory", packageWorkingDirectory.path,
-                "--verbose",
-            ],
+            executablePath: runnerPath,
+            arguments: PackageRunnerResolver.arguments(
+                inputPath: ipaURL.path,
+                outputPath: outputURL.path,
+                workingDirectoryPath: packageWorkingDirectory.path,
+                forceExtensionDecryption: forceExtensionDecryption,
+                supportsForceExtensions: runnerPath != currentRunnerPath
+            ),
             workingDirectory: jobDirectory,
             sandboxProfileURL: sandboxProfileURL,
-            timeoutSeconds: WebConfig.decryptTimeoutSeconds,
+            timeoutSeconds: timeoutSeconds,
+            cancellation: cancellation,
             onOutputLine: { [weak self] stream, line in
                 self?.appendLog(
                     id: taskID,
@@ -392,12 +459,29 @@ final class WebDownloadManager {
             }
         )
 
+        if cancellation.isCancelled {
+            throw Abort(.conflict, reason: "decrypt cancelled")
+        }
+
         guard result.exitCode == 0, fileExists(outputURL.path) else {
             let message = result.stderrString.isEmpty ? "decrypt runner exited with code \(result.exitCode)" : result.stderrString
             appendLog(id: taskID, phase: "decrypt", message: "failed: \(message)")
             throw Abort(.internalServerError, reason: message)
         }
 
+        let verification = try DecryptVerifier.verify(
+            outputURL: outputURL,
+            sourceURL: ipaURL,
+            allowEncryptedExtensions: forceExtensionDecryption == false
+        )
+        updateTask(id: taskID) { task in
+            task.verification = verification
+        }
+        appendLog(
+            id: taskID,
+            phase: "verify",
+            message: "verified \(verification.verifiedMachOCount)/\(verification.scannedMachOCount) Mach-O files"
+        )
         try replacePackageFile(at: ipaURL, with: outputURL)
         appendLog(id: taskID, phase: "decrypt", message: "complete")
     }
@@ -703,6 +787,30 @@ final class WebDownloadManager {
         }
     }
 
+    private func validateExternalSourceURL(_ rawValue: String) throws {
+        guard let components = URLComponents(string: rawValue),
+              let scheme = components.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = components.host?.lowercased(),
+              host.isEmpty == false
+        else {
+            throw Abort(.badRequest, reason: "invalid external IPA URL")
+        }
+        guard isPrivateNetworkHost(host) else {
+            throw Abort(.badRequest, reason: "external IPA URL must use a private LAN host")
+        }
+    }
+
+    private func isPrivateNetworkHost(_ host: String) -> Bool {
+        if host == "localhost" { return true }
+        let parts = host.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 4 else { return false }
+        return parts[0] == 10 ||
+            (parts[0] == 172 && (16...31).contains(parts[1])) ||
+            (parts[0] == 192 && parts[1] == 168) ||
+            (parts[0] == 169 && parts[1] == 254)
+    }
+
     private func fetchDownloadSizeBytes(_ rawValue: String) throws -> Int64 {
         guard let url = URL(string: rawValue) else {
             throw Abort(.badRequest, reason: "invalid download URL")
@@ -719,6 +827,9 @@ final class WebDownloadManager {
     private func errorDescription(_ error: Error) -> String {
         if let abort = error as? AbortError {
             return abort.reason
+        }
+        if let localized = error as? LocalizedError, let description = localized.errorDescription {
+            return description
         }
         return String(describing: error)
     }

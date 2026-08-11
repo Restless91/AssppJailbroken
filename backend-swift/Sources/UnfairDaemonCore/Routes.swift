@@ -14,9 +14,20 @@ struct HealthResponse: Content {
     }
 }
 
-func routes(_ app: Application, decryptService: DecryptService = DecryptService()) throws {
+func routes(
+    _ app: Application,
+    config: WebConfig? = nil,
+    decryptService: DecryptService = DecryptService()
+) throws {
     app.get("health") { _ in
         HealthResponse.current
+    }
+
+    if let config {
+        app.get("api", "node", "info") { req -> NodeInfoResponse in
+            try requireAccess(req, config: config)
+            return NodeInfoResponse.current(config: config)
+        }
     }
 
     app.on(.POST, "api", "v1", "decrypt", body: .stream) { req -> EventLoopFuture<DecryptQueueResponse> in

@@ -17,6 +17,23 @@ struct PosixSpawnResult {
     }
 }
 
+final class PosixSpawnCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+}
+
 enum PosixSpawn {
     enum OutputStream {
         case stdout
@@ -29,6 +46,7 @@ enum PosixSpawn {
         workingDirectory: URL,
         sandboxProfileURL: URL? = nil,
         timeoutSeconds: Int? = nil,
+        cancellation: PosixSpawnCancellation? = nil,
         onOutputLine: ((OutputStream, String) -> Void)? = nil
     ) throws -> PosixSpawnResult {
         var stdoutPipe = try makePipe(operation: "stdout pipe")
@@ -123,7 +141,7 @@ enum PosixSpawn {
         let waitStatus: Int32
         var waitError: Error?
         do {
-            waitStatus = try wait(for: pid, timeoutSeconds: timeoutSeconds)
+            waitStatus = try wait(for: pid, timeoutSeconds: timeoutSeconds, cancellation: cancellation)
         } catch {
             waitError = error
             waitStatus = 0
@@ -265,9 +283,13 @@ enum PosixSpawn {
         onOutputLine?(stream, trimmed)
     }
 
-    private static func wait(for pid: pid_t, timeoutSeconds: Int?) throws -> Int32 {
+    private static func wait(
+        for pid: pid_t,
+        timeoutSeconds: Int?,
+        cancellation: PosixSpawnCancellation?
+    ) throws -> Int32 {
         var waitStatus: Int32 = 0
-        guard let timeoutSeconds = timeoutSeconds else {
+        guard timeoutSeconds != nil || cancellation != nil else {
             while waitpid(pid, &waitStatus, 0) == -1 {
                 if errno == EINTR {
                     continue
@@ -277,7 +299,7 @@ enum PosixSpawn {
             return waitStatus
         }
 
-        let deadline = Date().addingTimeInterval(TimeInterval(timeoutSeconds))
+        let deadline = timeoutSeconds.map { Date().addingTimeInterval(TimeInterval($0)) }
         while true {
             let result = waitpid(pid, &waitStatus, WNOHANG)
             if result == pid {
@@ -289,10 +311,15 @@ enum PosixSpawn {
                 }
                 throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
             }
-            if Date() >= deadline {
+            if cancellation?.isCancelled == true {
                 kill(-pid, SIGKILL)
                 _ = waitpid(pid, &waitStatus, 0)
-                throw Abort(.requestTimeout, reason: "decrypt timed out after \(timeoutSeconds) seconds")
+                throw Abort(.conflict, reason: "decrypt cancelled")
+            }
+            if let deadline, Date() >= deadline {
+                kill(-pid, SIGKILL)
+                _ = waitpid(pid, &waitStatus, 0)
+                throw Abort(.requestTimeout, reason: "decrypt timed out after \(timeoutSeconds ?? 0) seconds")
             }
             Thread.sleep(forTimeInterval: 0.2)
         }

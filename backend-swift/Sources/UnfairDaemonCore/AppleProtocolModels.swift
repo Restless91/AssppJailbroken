@@ -68,6 +68,14 @@ struct VersionMetadata: Content, Hashable {
     var releaseDate: String
 }
 
+struct HistoricalVersionRecord: Content, Hashable, Sendable {
+    var versionId: String
+    var version: String
+    var date: String?
+    var sizeText: String?
+    var source: String
+}
+
 struct AppleDownloadOutput: Content {
     var downloadURL: String
     var sinfs: [Sinf]
@@ -100,6 +108,11 @@ struct AppleVersionMetadataRequest: Content {
     var versionId: String
 }
 
+struct AppleHistoricalVersionsRequest: Content {
+    var software: Software
+    var provider: String?
+}
+
 struct AppleDownloadRequest: Content {
     var account: AppleAccount
     var software: Software
@@ -119,6 +132,14 @@ struct AppleVersionListResponse: Content {
 struct AppleVersionMetadataResponse: Content {
     var account: AppleAccount
     var metadata: VersionMetadata
+}
+
+struct AppleHistoricalVersionsResponse: Content {
+    var provider: String
+    var records: [HistoricalVersionRecord]
+    var versions: [String]
+    var errors: [String]
+    var cached: Bool?
 }
 
 struct AppleDownloadResponse: Content {

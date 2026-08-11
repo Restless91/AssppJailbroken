@@ -1,6 +1,7 @@
 import Foundation
 @testable import UnfairDaemonCore
 import XCTest
+import Vapor
 
 final class PosixSpawnTests: XCTestCase {
     func testStreamsStdoutAndStderrLinesWhileKeepingFinalOutput() throws {
@@ -37,6 +38,31 @@ final class PosixSpawnTests: XCTestCase {
         XCTAssertTrue(capturedEvents.contains("stdout:out-one"))
         XCTAssertTrue(capturedEvents.contains("stderr:err-one"))
         XCTAssertTrue(capturedEvents.contains("stdout:out-two"))
+    }
+
+    func testCancellationTerminatesTheProcessGroupPromptly() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("unfaird-posix-cancel-tests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cancellation = PosixSpawnCancellation()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
+            cancellation.cancel()
+        }
+        let started = Date()
+
+        XCTAssertThrowsError(
+            try PosixSpawn.run(
+                executablePath: "/bin/sh",
+                arguments: ["-c", "sleep 30"],
+                workingDirectory: directory,
+                timeoutSeconds: 30,
+                cancellation: cancellation
+            )
+        ) { error in
+            XCTAssertEqual((error as? AbortError)?.reason, "decrypt cancelled")
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(started), 2)
     }
 
     private static func label(_ stream: PosixSpawn.OutputStream) -> String {

@@ -76,8 +76,23 @@ export interface DownloadTask {
   progress: number;
   speed: string;
   error?: string;
+  errorCode?:
+    | "encrypted_mapping_denied"
+    | "fairplay_authorization"
+    | "memory_pressure"
+    | "invalid_signature"
+    | "device_locked"
+    | "bundle_busy"
+    | "verification_failed"
+    | "insufficient_storage"
+    | "unknown";
   logs?: string[];
   hasFile?: boolean;
+  verification?: {
+    scannedMachOCount: number;
+    verifiedMachOCount: number;
+  };
+  sha256?: string;
   createdAt: string;
 }
 

@@ -24,7 +24,7 @@ export default function PageContainer({
   }, [location.pathname, clearSearch]);
 
   return (
-    <div className="flex-1 overflow-y-auto bg-bg pb-20 md:pb-0">
+    <div className="flex-1 overflow-y-auto bg-bg pb-[calc(5rem+env(safe-area-inset-bottom))] md:pb-0">
       <div className="max-w-5xl mx-auto px-4 py-6 sm:px-6 anim-in">
         {(title || action) && (
           <div className="mb-6 flex flex-wrap items-center justify-between gap-3">

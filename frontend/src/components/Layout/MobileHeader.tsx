@@ -40,8 +40,9 @@ function ThemeToggle() {
   return (
     <button
       onClick={cycleTheme}
-      className="btn btn-ghost btn-sm -mr-1 size-8 p-0"
+      className="btn btn-ghost -mr-2 size-11 p-0"
       title={t(`theme.${theme}`)}
+      aria-label={t(`theme.${theme}`)}
     >
       {theme === "light" && <SunIcon className="w-4 h-4" />}
       {theme === "dark" && <MoonIcon className="w-4 h-4" />}

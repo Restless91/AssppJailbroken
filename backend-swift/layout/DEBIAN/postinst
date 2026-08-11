@@ -17,10 +17,26 @@ find_libjailbreak() {
   for candidate in \
     "$prefix/usr/lib/libjailbreak.dylib" \
     "$prefix/basebin/libjailbreak.dylib" \
+    /var/jb/usr/lib/libjailbreak.dylib \
+    /var/jb/basebin/libjailbreak.dylib \
     /basebin/libjailbreak.dylib \
     /usr/lib/libjailbreak.dylib
   do
     if [ -e "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+find_external_decrypt_provider() {
+  prefix="$1"
+  for candidate in \
+    "$prefix/usr/local/lib/unfaird/fouldecrypt.kernrw" \
+    /usr/local/lib/unfaird/fouldecrypt.kernrw
+  do
+    if [ -x "$candidate" ]; then
       printf '%s\n' "$candidate"
       return 0
     fi
@@ -35,8 +51,12 @@ LEGACY_ASSPPWEB_PLIST="$PREFIX/Library/LaunchDaemons/$LEGACY_ASSPPWEB_LABEL.plis
 
 LIBJAILBREAK="$(find_libjailbreak "$PREFIX" || true)"
 if [ -z "$LIBJAILBREAK" ]; then
-  echo "$UNFAIRD_LABEL requires libjailbreak.dylib at $PREFIX/usr/lib, $PREFIX/basebin, /basebin, or /usr/lib" >&2
-  exit 1
+  EXTERNAL_PROVIDER="$(find_external_decrypt_provider "$PREFIX" || true)"
+  if [ -z "$EXTERNAL_PROVIDER" ]; then
+    echo "$UNFAIRD_LABEL requires libjailbreak.dylib or fouldecrypt.kernrw" >&2
+    exit 1
+  fi
+  echo "$UNFAIRD_LABEL using external decrypt provider: $EXTERNAL_PROVIDER" >&2
 fi
 
 install -d -m 0755 /var/tmp/unfaird/jobs /var/tmp/unfaird/logs /var/folders/bg/unfaird/T /var/folders/bg/unfaird/X /var/mobile/AssppWebData/packages

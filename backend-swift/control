@@ -1,12 +1,12 @@
 Package: wiki.qaq.unfaird
 Name: unfaird
-Version: 0.1.2
+Version: 0.1.7
 Architecture: iphoneos-arm64
 Description: Local HTTP IPA decrypt daemon for iOS.
  Includes the AssppWeb frontend and API routes inside the unfaird Vapor service.
 Section: Utilities
 Maintainer: LiBr <me@nvme0n1p.dev>
 Author: LiBr <me@nvme0n1p.dev>
-Depends: firmware (>= 15.0), ldid
+Depends: firmware (>= 14.0)
 Provides: wiki.qaq.assppweb
 Replaces: wiki.qaq.assppweb

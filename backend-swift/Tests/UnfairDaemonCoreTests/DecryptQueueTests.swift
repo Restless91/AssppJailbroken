@@ -126,6 +126,40 @@ final class DecryptQueueTests: XCTestCase {
         }
     }
 
+    func testExitZeroWithInvalidPackageIsStillReportedAsFailed() throws {
+        let context = try TestContext(
+            verifyPackage: { _, _ in
+                throw DecryptVerificationError(code: .stillEncrypted, paths: ["Payload/Test.app/Test"])
+            }
+        )
+        defer { context.cleanup() }
+
+        let app = Application(.testing)
+        defer { app.shutdown() }
+        try routes(app, decryptService: context.service)
+        var queued: DecryptQueueInfo?
+        try app.testable().test(
+            .POST,
+            "/api/v1/decrypt",
+            headers: ["Content-Type": "multipart/form-data; boundary=123"],
+            body: multipartIPA()
+        ) { response in
+            queued = try response.content.decode(DecryptQueueResponse.self).queue
+        }
+
+        let queue = try XCTUnwrap(queued)
+        try context.scheduler.runNext()
+        try app.testable().test(.GET, queue.readyURL) { response in
+            let content = try response.content.decode(DecryptReadyResponse.self)
+            XCTAssertEqual(content.queue.status, .failed)
+            XCTAssertFalse(content.queue.ready)
+            XCTAssertEqual(content.error, "decrypt verification failed (still_encrypted): Payload/Test.app/Test")
+        }
+        try app.testable().test(.GET, queue.downloadURL) { response in
+            XCTAssertEqual(response.status, .conflict)
+        }
+    }
+
     private func multipartIPA() -> ByteBuffer {
         var buffer = ByteBufferAllocator().buffer(capacity: 0)
         buffer.writeString("--123\r\n")
@@ -143,7 +177,10 @@ private final class TestContext {
     let scheduler: ManualJobScheduler
     let service: DecryptService
 
-    init(runProcess: DecryptService.ProcessRunner? = nil) throws {
+    init(
+        runProcess: DecryptService.ProcessRunner? = nil,
+        verifyPackage: @escaping DecryptService.PackageVerifier = { _, _ in }
+    ) throws {
         let scheduler = ManualJobScheduler()
         self.scheduler = scheduler
         root = FileManager.default.temporaryDirectory
@@ -164,7 +201,8 @@ private final class TestContext {
                 currentTimestamp: { 1_700_000_000 },
                 runProcess: runProcess ?? Self.successfulRunProcess,
                 reserveTask: { _, _ in {} },
-                scheduleJob: scheduler.schedule
+                scheduleJob: scheduler.schedule,
+                verifyPackage: verifyPackage
             )
         )
     }

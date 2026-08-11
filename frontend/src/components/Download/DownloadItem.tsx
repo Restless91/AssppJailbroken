@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import AppIcon from "../common/AppIcon";
 import Badge from "../common/Badge";
 import ProgressBar from "../common/ProgressBar";
+import VerificationSummary from "./VerificationSummary";
 import type { DownloadTask } from "../../types";
 
 interface DownloadItemProps {
@@ -24,7 +25,8 @@ export default function DownloadItem({
     task.status === "downloading" ||
     task.status === "injecting" ||
     task.status === "decrypting";
-  const canPause = task.status === "downloading";
+  const canPause =
+    task.status === "downloading" || task.status === "decrypting";
   const isPaused = task.status === "paused";
   const isCompleted = task.status === "completed";
 
@@ -69,6 +71,8 @@ export default function DownloadItem({
               {task.error}
             </p>
           )}
+
+          <VerificationSummary verification={task.verification} sha256={task.sha256} errorCode={task.errorCode} compact />
 
           <div className="flex flex-wrap gap-2 mt-3">
             {canPause && (

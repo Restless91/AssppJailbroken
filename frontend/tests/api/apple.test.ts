@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   authenticate,
   AuthenticationError,
+  listHistoricalVersions,
   listVersions,
   startAppleDownload,
 } from '../../src/api/apple';
@@ -101,6 +102,25 @@ describe('api/apple', () => {
     await expect(listVersions(account, software)).resolves.toEqual({
       account,
       versions: ['3', '2', '1'],
+    });
+  });
+
+  it('loads historical version records without exposing an Apple account', async () => {
+    const history = {
+      provider: 'timbrd',
+      records: [{ versionId: '888', version: '8.0.75', source: 'timbrd' }],
+      versions: ['888'],
+      errors: [],
+    };
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+      new Response(JSON.stringify(history), { status: 200 }),
+    );
+
+    await expect(listHistoricalVersions(software, 'auto')).resolves.toEqual(history);
+    expect(fetch).toHaveBeenCalledWith('/api/apple/historical-versions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ software, provider: 'auto' }),
     });
   });
 

@@ -8,6 +8,7 @@ import Badge from "../common/Badge";
 import ProgressBar from "../common/ProgressBar";
 import Modal from "../common/Modal";
 import DownloadLog from "./DownloadLog";
+import VerificationSummary from "./VerificationSummary";
 import { useDownloads } from "../../hooks/useDownloads";
 import { useAccounts } from "../../hooks/useAccounts";
 import { useDownloadAction } from "../../hooks/useDownloadAction";
@@ -66,7 +67,8 @@ export default function PackageDetail() {
     task.status === "downloading" ||
     task.status === "injecting" ||
     task.status === "decrypting";
-  const canPause = task.status === "downloading";
+  const canPause =
+    task.status === "downloading" || task.status === "decrypting";
   const isPaused = task.status === "paused";
   const isCompleted = task.status === "completed";
   const installInfo = isCompleted ? getInstallInfo(task.id) : null;
@@ -225,8 +227,8 @@ export default function PackageDetail() {
             name={task.software.name}
             size="lg"
           />
-          <div className="flex-1">
-            <h2 className="page-title">
+          <div className="min-w-0 flex-1">
+            <h2 className="page-title break-words">
               {task.software.name}
             </h2>
             <p className="page-subtitle">
@@ -254,6 +256,12 @@ export default function PackageDetail() {
         {task.error && (
           <p className="alert" data-tone="error">{task.error}</p>
         )}
+
+        <VerificationSummary
+          verification={task.verification}
+          sha256={task.sha256}
+          errorCode={task.errorCode}
+        />
 
         {((task.logs?.length ?? 0) > 0 ||
           isActive ||
