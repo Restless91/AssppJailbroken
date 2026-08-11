@@ -43,6 +43,15 @@
       "searchAppsDesc": "App Storeで名前やIDからアプリを探します。",
       "viewDownloads": "ダウンロードを表示",
       "viewDownloadsDesc": "進行状況を確認し、パッケージを管理します。"
+    },
+    "recommendations": {
+      "title": "App Store おすすめ",
+      "subtitle": "{{country}} の無料アプリランキング",
+      "more": "さらに検索",
+      "failed": "おすすめを読み込めませんでした。",
+      "retry": "再試行",
+      "empty": "この地域のおすすめはありません。",
+      "open": "{{rank}} 位、{{name}} を表示"
     }
   },
   "search": {

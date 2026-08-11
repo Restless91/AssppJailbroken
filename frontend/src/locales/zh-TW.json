@@ -43,6 +43,15 @@
       "searchAppsDesc": "透過名稱或 ID 在 App Store 尋找應用程式。",
       "viewDownloads": "查看下載",
       "viewDownloadsDesc": "查看下載進度並管理安裝包。"
+    },
+    "recommendations": {
+      "title": "App Store 推薦",
+      "subtitle": "{{country}} 地區免費 App 排行",
+      "more": "搜尋更多",
+      "failed": "暫時無法載入 App Store 推薦。",
+      "retry": "重新載入",
+      "empty": "目前地區暫無推薦 App。",
+      "open": "第 {{rank}} 名，查看 {{name}}"
     }
   },
   "search": {

@@ -29,6 +29,8 @@ export default function AppIcon({ url, name, size = "md" }: AppIconProps) {
     <img
       src={url}
       alt={name}
+      loading="lazy"
+      decoding="async"
       className={`${sizeClasses[size]} object-cover`}
       onError={() => setFailed(true)}
     />

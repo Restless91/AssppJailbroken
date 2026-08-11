@@ -99,6 +99,13 @@ private func registerAppleProxyRoutes(_ app: Application, config: WebConfig) {
         }
         return try jsonEncodableResponse(first.software())
     }
+
+    app.get("api", "recommendations") { req -> Response in
+        try requireAccess(req, config: config)
+        let country = req.query[String.self, at: "country"] ?? "US"
+        let limit = req.query[Int.self, at: "limit"] ?? 8
+        return try jsonEncodableResponse(AppRecommendationProvider.fetch(country: country, limit: limit))
+    }
 }
 
 private func registerDownloadRoutes(_ app: Application, config: WebConfig, manager: WebDownloadManager) {

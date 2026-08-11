@@ -43,6 +43,15 @@
       "searchAppsDesc": "Find apps on the App Store by name or ID.",
       "viewDownloads": "View Downloads",
       "viewDownloadsDesc": "Check download progress and manage packages."
+    },
+    "recommendations": {
+      "title": "App Store Picks",
+      "subtitle": "Top free apps in {{country}}",
+      "more": "Find more",
+      "failed": "App Store recommendations are temporarily unavailable.",
+      "retry": "Try again",
+      "empty": "No recommendations are available for this region.",
+      "open": "Rank {{rank}}, view {{name}}"
     }
   },
   "search": {

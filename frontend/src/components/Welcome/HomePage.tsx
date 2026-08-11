@@ -4,7 +4,9 @@ import { useTranslation } from "react-i18next";
 import PageContainer from "../Layout/PageContainer";
 import { useAccounts } from "../../hooks/useAccounts";
 import { apiGet } from "../../api/client";
-import { accountHash } from "../../utils/account";
+import { accountHash, firstAccountCountry } from "../../utils/account";
+import { useSettingsStore } from "../../store/settings";
+import AppRecommendations from "./AppRecommendations";
 
 interface Stats {
   accounts: number;
@@ -15,6 +17,8 @@ interface Stats {
 export default function HomePage() {
   const { t } = useTranslation();
   const { accounts } = useAccounts();
+  const defaultCountry = useSettingsStore((state) => state.defaultCountry);
+  const recommendationCountry = firstAccountCountry(accounts) ?? defaultCountry ?? "US";
   const [stats, setStats] = useState<Stats>({
     accounts: 0,
     downloads: 0,
@@ -93,6 +97,8 @@ export default function HomePage() {
             description={t("home.actions.viewDownloadsDesc")}
           />
         </div>
+
+        <AppRecommendations country={recommendationCountry} />
       </div>
     </PageContainer>
   );

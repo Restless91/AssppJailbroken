@@ -28,6 +28,9 @@ rootless 发布版本 `0.1.8` 新增持久化解密 Checkpoint、`main_only` / `
 `--checkpoint`，旧 runner 不会收到不兼容参数。daemon 重启后，有原始 IPA 和有效 Checkpoint 的
 解密任务会自动重新进入后台队列；Safari 连接并不拥有任务生命周期。
 
+版本 `0.1.9` 在设备首页加入按 Apple ID 地区加载的 App Store 免费榜推荐。推荐数据由 daemon
+代理 Apple Marketing Tools 榜单，前端提供响应式卡片、加载骨架、错误重试和应用详情深链接。
+
 ## 本次修复和适配
 
 ### 1. rootless 部署
