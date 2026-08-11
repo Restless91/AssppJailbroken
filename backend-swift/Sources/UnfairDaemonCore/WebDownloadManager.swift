@@ -431,6 +431,7 @@ final class WebDownloadManager {
                     return
                 }
                 let filePath = queuedRecord.task.filePath ?? ""
+                let declaredPackageSize = Int64(queuedRecord.task.software.fileSizeBytes ?? "") ?? 0
                 queuedRecord.task.status = DownloadStatus.downloading.rawValue
                 queuedRecord.task.progress = 0
                 queuedRecord.task.speed = "0 B/s"
@@ -442,7 +443,44 @@ final class WebDownloadManager {
                     at: URL(fileURLWithPath: filePath).deletingLastPathComponent(),
                     withIntermediateDirectories: true
                 )
-                try self.download(urlString: downloadURL, to: URL(fileURLWithPath: filePath), taskID: id)
+                let destinationURL = URL(fileURLWithPath: filePath)
+                let partialURL = ResumableFileDownloader.partialURL(for: destinationURL)
+                let partialBytes = ((try? FileManager.default.attributesOfItem(atPath: partialURL.path)[.size]) as? NSNumber)?.int64Value ?? 0
+                let probedPackageSize = declaredPackageSize > 0
+                    ? declaredPackageSize
+                    : ((try? self.fetchDownloadSizeBytes(downloadURL)) ?? 0)
+                let initialRequiredBytes = StorageBudget.requiredBytes(
+                    packageSize: probedPackageSize,
+                    existingBytes: partialBytes
+                )
+                var storageReservation: DecryptTaskReservation? = try DecryptTaskGate.shared.reserve(
+                    workDirectory: self.packagesDirectory,
+                    bytesPerTask: initialRequiredBytes
+                )
+                defer { storageReservation?.release() }
+                self.appendLog(
+                    id: id,
+                    phase: "download",
+                    message: "reserved \(initialRequiredBytes) bytes for download and decrypt pipeline"
+                )
+                try self.download(urlString: downloadURL, to: destinationURL, taskID: id)
+
+                let actualPackageSize = ((try? FileManager.default.attributesOfItem(atPath: filePath)[.size]) as? NSNumber)?.int64Value ?? 0
+                let remainingRequiredBytes = StorageBudget.requiredBytes(
+                    packageSize: actualPackageSize,
+                    existingBytes: actualPackageSize
+                )
+                storageReservation?.release()
+                storageReservation = nil
+                storageReservation = try DecryptTaskGate.shared.reserve(
+                    workDirectory: self.packagesDirectory,
+                    bytesPerTask: remainingRequiredBytes
+                )
+                self.appendLog(
+                    id: id,
+                    phase: "download",
+                    message: "reconciled storage reservation to \(remainingRequiredBytes) bytes after download"
+                )
 
                 if sinfs.isEmpty == false {
                     stage = "SINF injection"
@@ -465,12 +503,6 @@ final class WebDownloadManager {
                     self.appendLogLocked(to: &task, phase: "decrypt", message: "running unfaird package processor")
                 }
                 self.persistTasks()
-                let packageSize = ((try? FileManager.default.attributesOfItem(atPath: filePath)[.size]) as? NSNumber)?.int64Value ?? 0
-                let storageReservation = try DecryptTaskGate.shared.reserve(
-                    workDirectory: self.packagesDirectory,
-                    bytesPerTask: StorageBudget.requiredBytes(packageSize: packageSize)
-                )
-                defer { storageReservation.release() }
                 guard let bundleLease = BundleTaskGate.shared.tryAcquire(bundleID: requestBundleID) else {
                     throw Abort(.conflict, reason: "another task is processing this bundle")
                 }
