@@ -4,6 +4,15 @@ services:
     container_name: asspp-platform
     restart: unless-stopped
     network_mode: host
+    read_only: true
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 2.0
     environment:
       PORT: "8090"
       PLATFORM_CONFIG: /app/config.json
@@ -12,3 +21,5 @@ services:
     volumes:
       - ./config.json:/app/config.json:ro
       - /mnt/nvme0n1-4/asspp-platform:/app/data
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m

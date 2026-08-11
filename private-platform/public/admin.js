@@ -887,6 +887,9 @@ function renderSchedulerForm(value) {
       <label class="admin-field"><span>单设备最多执行次数</span><input class="field-input" type="number" min="1" max="10" name="maxAttemptsPerDevice" value="${escapeHtml(value.maxAttemptsPerDevice)}"></label>
       <label class="admin-field"><span>单任务最多使用设备数</span><input class="field-input" type="number" min="1" max="20" name="maxDevicesPerJob" value="${escapeHtml(value.maxDevicesPerJob)}"></label>
       <label class="admin-field"><span>单任务最多执行次数</span><input class="field-input" type="number" min="1" max="50" name="maxAttemptsPerJob" value="${escapeHtml(value.maxAttemptsPerJob)}"></label>
+      <label class="admin-field"><span>全局最多排队任务</span><input class="field-input" type="number" min="1" max="10000" name="maxQueuedGlobal" value="${escapeHtml(value.maxQueuedGlobal || 100)}"></label>
+      <label class="admin-field"><span>每用户最多排队</span><input class="field-input" type="number" min="1" max="100" name="maxQueuedPerUser" value="${escapeHtml(value.maxQueuedPerUser || 3)}"></label>
+      <label class="admin-field"><span>每用户最多执行</span><input class="field-input" type="number" min="1" max="10" name="maxActivePerUser" value="${escapeHtml(value.maxActivePerUser || 1)}"></label>
       <label class="admin-field"><span>所需空间安全系数</span><input class="field-input" type="number" min="1" max="10" step="0.1" name="requiredSpaceMultiplier" value="${escapeHtml(value.requiredSpaceMultiplier)}"></label>
       <label class="admin-field"><span>最低可用空间（GB）</span><input class="field-input" type="number" min="0" step="0.1" name="minimumFreeGB" value="${escapeHtml((Number(value.minimumFreeBytes || 0) / 1024 / 1024 / 1024).toFixed(1))}"></label>
       <label class="admin-field"><span>砸壳额外开销（GB）</span><input class="field-input" type="number" min="0" step="0.1" name="storageOverheadGB" value="${escapeHtml((Number(value.storageOverheadBytes || 0) / 1024 / 1024 / 1024).toFixed(1))}"></label>

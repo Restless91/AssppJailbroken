@@ -41,6 +41,7 @@ ROUTER_PASSWORD='路由器密码' ./deploy/istoreos/sync.sh
 
 ```sh
 cd /opt/asspp-platform
+export PLATFORM_MASTER_KEY='至少32字符的独立随机密钥'
 docker compose up -d
 ```
 
@@ -53,8 +54,16 @@ docker logs -f asspp-platform
 健康检查：
 
 ```sh
-curl http://127.0.0.1:8080/api/health
+curl http://127.0.0.1:8080/api/health/live
+curl http://127.0.0.1:8080/api/health/ready
 ```
+
+平台每天自动对 SQLite WAL 数据库制作一致性快照，先执行 checkpoint，再通过 `VACUUM INTO`
+写入 `/app/data/backups`，并校验 SHA-256 与 `PRAGMA integrity_check`。升级前仍建议额外备份
+`/opt/asspp-platform` 和整个持久化数据目录。
+
+综合调度采用持久化设备租约、用户公平轮转和用户级并发/排队上限。默认每名用户同时运行 1 个、
+排队 3 个任务；同一用户内部保持 FIFO，不同用户不会因大批量提交而长期饥饿。
 
 当前设备端调度契约采用与 unfaird `0.1.14` 一致的空间预算：`max(2 GiB, IPA × 3 + 512 MiB)`。
 后台会保留设备返回的 `insufficient_storage` 错误，并在设备列表展示 daemon 构建和砸壳能力。

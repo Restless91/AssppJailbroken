@@ -97,10 +97,10 @@ log "restarting container on the router"
   "cd $DEPLOY_DIR && if docker compose version >/dev/null 2>&1; then docker compose up -d --force-recreate asspp-platform; elif command -v docker-compose >/dev/null 2>&1; then docker-compose up -d --force-recreate asspp-platform; else docker restart asspp-platform; fi"
 
 # --- health check -----------------------------------------------------------
-log "health check http://$ROUTER_HOST:$ROUTER_HTTP_PORT/api/health"
+log "liveness check http://$ROUTER_HOST:$ROUTER_HTTP_PORT/api/health/live"
 code=""
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-  code="$(curl -sS -m 5 -o /dev/null -w '%{http_code}' "http://$ROUTER_HOST:$ROUTER_HTTP_PORT/api/health" || true)"
+  code="$(curl -sS -m 5 -o /dev/null -w '%{http_code}' "http://$ROUTER_HOST:$ROUTER_HTTP_PORT/api/health/live" || true)"
   [[ "$code" == "200" ]] && break
   sleep 1
 done

@@ -5,13 +5,28 @@ services:
     working_dir: /app
     command: node server.mjs
     restart: unless-stopped
+    read_only: true
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 2.0
     ports:
       - "8080:8090"
     volumes:
-      - ./private-platform:/app
+      - ./private-platform:/app:ro
       - ./config.router.json:/app/config.router.json:ro
       # Keep all runtime state, temporary encrypted IPA files, and final IPA artifacts
       # on the large Docker disk instead of the small iStoreOS overlay partition.
       - /mnt/nvme0n1-4/asspp-platform-data/data:/app/data
     environment:
       - PLATFORM_CONFIG=/app/config.router.json
+      - PLATFORM_DATABASE=/app/data/platform.sqlite
+      - PLATFORM_BACKUP_DIR=/app/data/backups
+      - PLATFORM_MASTER_KEY=${PLATFORM_MASTER_KEY:?set PLATFORM_MASTER_KEY to at least 32 characters}
+      - NODE_ENV=production
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m

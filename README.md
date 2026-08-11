@@ -284,10 +284,20 @@ npm run check
 安装 Provider 失败。全局默认扩展策略为“尝试解密应用扩展”；可在设备组或单台设备上改为
 “跳过应用扩展”稳定模式。
 
-管理平台对每台设备保持单任务互斥，其余任务按全局 FIFO 和设备内部队列等待。空间调度与
+管理平台使用持久化设备租约保证每台设备只运行一个任务，其余任务按用户公平轮转并保持各用户
+内部 FIFO；默认每名用户最多运行 1 个、排队 3 个任务，避免单一用户占满 iPhone8、iPhone11、
+iPhone15。平台重启后会从 SQLite JobJournal 恢复设备任务和租约。空间调度与
 unfaird `0.1.14` 保持一致：`max(2 GiB, IPA × 3 + 512 MiB)`；设备的 `pending`、`queuePosition`、
 `canRetry` 和 `insufficient_storage` 会同步到综合后台。设备卡会显示 daemon 构建、运行环境、
 可用空间和砸壳能力，方便确认 iPhone8、iPhone11、iPhone15 的实际适配状态。
+
+综合管理平台 `0.2.0` 增加了路由器磁盘预留、隐藏 staging、原子发布、SHA-256 receipt、COS
+失败清理与可重试过期回收。管理数据库每天使用 WAL checkpoint + `VACUUM INTO` 生成一致性
+备份，并在写入后校验大小、SHA-256 和 SQLite `integrity_check`；默认目录为
+`/app/data/backups`。健康检查拆分为 `/api/health/live` 与 `/api/health/ready`，Prometheus 指标位于
+`/api/metrics`。生产部署要求独立的 32 字符以上 `PLATFORM_MASTER_KEY`，管理令牌只允许通过
+Header 传递；Compose 默认启用只读根文件系统、移除 capabilities、`no-new-privileges`、PID/内存/
+CPU 限额和受限 `/tmp`。
 
 当前 iPhone 后端为平台提供以下兼容接口：
 
