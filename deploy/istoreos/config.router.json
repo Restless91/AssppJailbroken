@@ -1,0 +1,41 @@
+{
+  "port": 8090,
+  "adminToken": "local-test",
+  "publicBaseUrl": "http://dump.91ios.fun:8080",
+  "internalBaseUrl": "http://192.168.100.1:8080",
+  "devices": [],
+  "storage": {
+    "mode": "cos",
+    "localDir": "./data/artifacts",
+    "artifactRetentionMinutes": 1440,
+    "cos": {
+      "enabled": true,
+      "secretId": "",
+      "secretKey": "",
+      "region": "ap-shanghai",
+      "bucket": "blog-1314572338",
+      "publicDomain": "https://cos.91ios.fun",
+      "prefix": "ipa"
+    }
+  },
+  "browserAccountSync": {
+    "enabled": false,
+    "reason": "当前平台运行在 iStoreOS Docker 容器内，无法读取 Mac/Edge 的 IndexedDB。已改为使用 /opt/asspp-platform/data/account.current.json。"
+  },
+  "wechat": {
+    "appId": "",
+    "appSecret": "",
+    "token": "",
+    "encodingAESKey": "",
+    "templateId": "",
+    "adminOpenids": [],
+    "sessionMaxAgeSeconds": 604800,
+    "templateFields": {
+      "thing1": "appName",
+      "phrase2": "status",
+      "time3": "finishedAt",
+      "thing4": "expiresAt",
+      "thing5": "remark"
+    }
+  }
+}

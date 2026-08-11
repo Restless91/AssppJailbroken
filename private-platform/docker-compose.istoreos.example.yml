@@ -1,0 +1,14 @@
+services:
+  asspp-platform:
+    build: .
+    container_name: asspp-platform
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      PORT: "8090"
+      PLATFORM_CONFIG: /app/config.json
+      PLATFORM_DATABASE: /app/data/platform.sqlite
+      PLATFORM_MASTER_KEY: replace-with-at-least-32-random-characters
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - /mnt/nvme0n1-4/asspp-platform:/app/data

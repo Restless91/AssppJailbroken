@@ -1,0 +1,85 @@
+{
+  "port": 8090,
+  "adminToken": "change-me",
+  "publicBaseUrl": "https://dump.dkapps.cn",
+  "internalBaseUrl": "http://192.168.100.1:8090",
+  "cards": {
+    "purchaseUrl": "",
+    "purchaseHint": "请在微信公众号回复“购买兑换码”获取购买方式"
+  },
+  "devices": [
+    {
+      "id": "iphone-1",
+      "name": "生产 iPhone",
+      "baseUrl": "http://192.168.100.227:8080",
+      "accessToken": "",
+      "accountHash": "replace-with-account-hash",
+      "accountFile": "./data/account.example.json",
+      "enabled": true,
+      "groupId": "primary",
+      "priorityClass": "primary",
+      "weight": 80
+    },
+    {
+      "id": "iphone-taurine",
+      "name": "Taurine 测试设备",
+      "baseUrl": "http://192.168.100.122:8080",
+      "accessToken": "",
+      "enabled": true,
+      "groupId": "test",
+      "priorityClass": "test",
+      "weight": 10
+    }
+  ],
+  "storage": {
+    "mode": "local",
+    "localDir": "./data/artifacts",
+    "artifactRetentionMinutes": 1440,
+    "publicBaseUrl": "https://dump.dkapps.cn",
+    "internalBaseUrl": "http://192.168.100.1:8090",
+    "cosUploadCommand": "",
+    "cos": {
+      "enabled": false,
+      "secretId": "",
+      "secretKey": "",
+      "region": "",
+      "bucket": "",
+      "publicDomain": "",
+      "prefix": "ipa",
+      "signedUrlMinutes": 15
+    },
+    "fallbackCos": {
+      "enabled": false,
+      "secretId": "",
+      "secretKey": "",
+      "region": "",
+      "bucket": "",
+      "publicDomain": "",
+      "prefix": "ipa",
+      "signedUrlMinutes": 15
+    }
+  },
+  "wechatGateway": {
+    "baseUrl": "https://wx.example.com",
+    "clientId": "asspp-dump",
+    "clientSecret": "",
+    "appId": "",
+    "timeoutMs": 10000
+  },
+  "wechat": {
+    "appId": "",
+    "appSecret": "",
+    "token": "",
+    "encodingAESKey": "",
+    "templateId": "",
+    "adminOpenids": [],
+    "sessionMaxAgeSeconds": 604800,
+    "templateFields": {
+      "thing1": "appName",
+      "phrase2": "status",
+      "time3": "finishedAt",
+      "thing4": "expiresAt",
+      "thing5": "remark"
+    }
+  }
+}

@@ -1,0 +1,26 @@
+[
+  {
+    "id": "wechat",
+    "name": "微信",
+    "bundleId": "com.tencent.xin",
+    "icon": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/87/8d/f0/878df070-3ec1-e101-38a7-21c871eb832f/AppIcon-0-0-1x_U007emarketing-0-10-0-0-85-220.png/512x512bb.jpg",
+    "category": "社交",
+    "description": "热门社交应用，适合验证大体积应用任务链路。"
+  },
+  {
+    "id": "kuaishou",
+    "name": "快手",
+    "bundleId": "com.kwai.gif",
+    "icon": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/f4/18/fb/f418fb17-c8f6-f2f4-3f43-a46dc02d85d1b/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+    "category": "视频",
+    "description": "大体积应用，建议用于稳定性优化后的压力测试。"
+  },
+  {
+    "id": "dazz",
+    "name": "Dazz相机",
+    "bundleId": "1422471180",
+    "icon": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/42/d5/de/42d5de50-021c-e8cf-d896-c63231e64fe0/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+    "category": "摄影",
+    "description": "中等体积应用，适合日常验证下载、解密和上传流程。"
+  }
+]

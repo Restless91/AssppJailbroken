@@ -266,7 +266,7 @@ Web UI 已针对 iPhone 15（含 Safari/PWA）调整：顶部和底部使用安�
 底部导航不会遮挡内容，移动端交互控件保持至少 44pt 的触控区域。下载列表与安装包详情会显示
 Mach-O 校验数量、产物 SHA-256 和稳定错误码；长 Bundle ID、哈希及应用名称会在窄屏正确换行。
 
-附件中的 `private-platform/` 可直接作为 iStoreOS 综合管理平台使用，无需修改其业务代码。
+`private-platform/` 已作为当前项目的 iStoreOS 综合管理平台 Module 纳入版本管理。
 推荐在 iStoreOS 上使用示例 Compose 文件启动：
 
 ```bash
@@ -283,6 +283,11 @@ npm run check
 `appinstInstall=false` 且 `trollStoreInstall=false` 的设备不会接收任务，避免下载数百 MB 后才因缺少
 安装 Provider 失败。全局默认扩展策略为“尝试解密应用扩展”；可在设备组或单台设备上改为
 “跳过应用扩展”稳定模式。
+
+管理平台对每台设备保持单任务互斥，其余任务按全局 FIFO 和设备内部队列等待。空间调度与
+unfaird `0.1.14` 保持一致：`max(2 GiB, IPA × 3 + 512 MiB)`；设备的 `pending`、`queuePosition`、
+`canRetry` 和 `insufficient_storage` 会同步到综合后台。设备卡会显示 daemon 构建、运行环境、
+可用空间和砸壳能力，方便确认 iPhone8、iPhone11、iPhone15 的实际适配状态。
 
 当前 iPhone 后端为平台提供以下兼容接口：
 

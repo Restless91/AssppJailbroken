@@ -1,0 +1,9 @@
+data/*
+!data/account.example.json
+config.json
+config.local.json
+test
+.DS_Store
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal

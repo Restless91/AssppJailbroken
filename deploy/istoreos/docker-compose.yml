@@ -1,0 +1,17 @@
+services:
+  asspp-platform:
+    image: node:22-alpine
+    container_name: asspp-platform
+    working_dir: /app
+    command: node server.mjs
+    restart: unless-stopped
+    ports:
+      - "8080:8090"
+    volumes:
+      - ./private-platform:/app
+      - ./config.router.json:/app/config.router.json:ro
+      # Keep all runtime state, temporary encrypted IPA files, and final IPA artifacts
+      # on the large Docker disk instead of the small iStoreOS overlay partition.
+      - /mnt/nvme0n1-4/asspp-platform-data/data:/app/data
+    environment:
+      - PLATFORM_CONFIG=/app/config.router.json

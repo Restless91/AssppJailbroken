@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <title>91iOS Dump</title>
+    <link rel="stylesheet" href="/styles.css?v=20260729-auth2" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="侧边导航">
+        <a class="brand" href="/" data-route aria-label="91iOS Dump 首页">
+          <span class="brand-mark" aria-hidden="true">91</span>
+          <span class="brand-title">91iOS Dump</span>
+        </a>
+        <nav class="sidebar-nav" aria-label="Page">
+          <a href="/" data-route data-nav="home" class="sidebar-nav-item">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 11 9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9Z"/></svg>
+            首页
+          </a>
+          <a href="/search" data-route data-nav="search" class="sidebar-nav-item">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.4-4.4M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z"/></svg>
+            搜索
+          </a>
+          <a href="/downloads" data-route data-nav="downloads" class="sidebar-nav-item">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 19h16"/></svg>
+            下载
+          </a>
+          <button id="creditButton" class="credit-button" type="button" hidden>
+            <span>可用次数</span>
+            <strong><span data-credit-balance>--</span> 次</strong>
+            <small>购买 / 兑换服务码</small>
+          </button>
+        </nav>
+      </aside>
+
+      <header class="mobile-header">
+        <a class="brand" href="/" data-route aria-label="91iOS Dump 首页">
+          <span class="brand-mark" aria-hidden="true">91</span>
+          <span class="brand-title">91iOS Dump</span>
+        </a>
+        <button id="creditButtonMobile" class="credit-button-mobile" type="button" hidden>
+          余 <span data-credit-balance>--</span> 次
+        </button>
+      </header>
+
+      <main id="main" class="main">
+        <section class="page-view" data-page="home">
+          <div class="page-container">
+            <div class="page-header">
+              <div>
+                <h1 class="page-title">首页</h1>
+                <p class="page-subtitle">搜索 App Store 应用，发送到 iPhone 队列；完成后自动上传 COS 并返回下载链接。</p>
+              </div>
+              <div class="page-actions">
+                <button id="refreshButton" class="btn btn-ghost" type="button"><span class="button-label">刷新状态</span></button>
+                <button id="syncAccountButton" class="btn btn-ghost" type="button"><span class="button-label">账户状态</span></button>
+              </div>
+            </div>
+
+            <section class="card card-pad">
+              <div class="section-head">
+                <div>
+                  <h2 class="section-title">搜索应用</h2>
+                  <p class="section-desc">与 iPhone 后端一致，输入名称、App Store ID 或 Bundle ID。</p>
+                </div>
+              </div>
+              <form id="searchForm" class="search-form" role="search">
+                <div class="search-line">
+                  <input id="searchInput" class="field-input" type="search" placeholder="搜索 App Store，例如：微信、抖音、com.tencent.xin" autocomplete="off" />
+                  <button id="searchButton" class="btn btn-primary" type="submit">搜索</button>
+                </div>
+                <div class="select-line">
+                  <select id="searchCountry" class="field-input field-select">
+                    <option value="cn">中国大陆</option>
+                    <option value="us">美国</option>
+                    <option value="jp">日本</option>
+                    <option value="hk">香港</option>
+                    <option value="tw">台湾</option>
+                  </select>
+                  <select id="searchEntity" class="field-input field-select">
+                    <option value="software">iPhone</option>
+                    <option value="iPadSoftware">iPad</option>
+                  </select>
+                </div>
+              </form>
+            </section>
+
+            <section class="metrics-grid" aria-label="任务概览">
+              <article class="metric-card"><span>在线设备</span><strong id="metricOnline">--</strong></article>
+              <article class="metric-card"><span>运行中</span><strong id="metricActive">--</strong></article>
+              <article class="metric-card"><span>线上任务</span><strong id="metricOnlineTasks">--</strong></article>
+              <article class="metric-card"><span>排队中</span><strong id="metricQueued">--</strong></article>
+              <article class="metric-card"><span>已完成</span><strong id="metricCompleted">--</strong></article>
+              <article class="metric-card"><span>异常</span><strong id="metricFailed">--</strong></article>
+            </section>
+
+            <section class="card card-pad" id="devices">
+              <div class="section-head">
+                <div>
+                  <h2 class="section-title">设备状态</h2>
+                  <p class="section-desc">同一台 iPhone 同一时间只执行一个任务，后续任务排队。</p>
+                </div>
+                <span id="deviceSummary" class="badge neutral">检测中</span>
+              </div>
+              <div id="deviceList" class="device-list">加载中...</div>
+            </section>
+
+            <section class="card card-pad">
+              <div class="section-head">
+                <div>
+                  <h2 class="section-title">高级选项</h2>
+                  <p class="section-desc">默认使用稳定模式，减少大包和应用扩展引起的失败概率。</p>
+                </div>
+              </div>
+              <label class="option-row">
+                <input id="forceExtensionToggle" type="checkbox" />
+                <span>
+                  <strong>尝试解密应用扩展</strong>
+                  <small>默认关闭。开启后会尝试应用扩展，但失败不阻塞主程序结果。</small>
+                </span>
+              </label>
+            </section>
+
+            <section class="card card-pad" id="apps">
+              <div class="section-head">
+                <div>
+                  <h2 class="section-title">热门应用榜</h2>
+                  <p class="section-desc">中国区 App Store 免费榜，可直接创建应用解密任务。</p>
+                </div>
+                <button id="reloadTopAppsButton" class="btn btn-ghost btn-sm" type="button">刷新排行榜</button>
+              </div>
+              <div id="appGrid" class="list-stack" aria-live="polite"></div>
+            </section>
+          </div>
+        </section>
+
+        <section class="page-view" data-page="search" hidden>
+          <div class="page-container">
+            <div class="page-header">
+              <div>
+                <h1 class="page-title">搜索</h1>
+                <p id="searchResultSubtitle" class="page-subtitle">输入关键词后，这里会展示 App Store 搜索结果。</p>
+              </div>
+            </div>
+
+            <form id="searchPageForm" class="search-form page-search" role="search">
+              <div class="search-line">
+                <input id="searchPageInput" class="field-input" type="search" placeholder="搜索 App Store，例如：微信、抖音、com.tencent.xin" autocomplete="off" />
+                <button id="searchPageButton" class="btn btn-primary" type="submit">搜索</button>
+              </div>
+              <div class="select-line">
+                <select id="searchPageCountry" class="field-input field-select">
+                  <option value="cn">中国大陆</option>
+                  <option value="us">美国</option>
+                  <option value="jp">日本</option>
+                  <option value="hk">香港</option>
+                  <option value="tw">台湾</option>
+                </select>
+                <select id="searchPageEntity" class="field-input field-select">
+                  <option value="software">iPhone</option>
+                  <option value="iPadSoftware">iPad</option>
+                </select>
+              </div>
+            </form>
+
+            <div id="searchResults" class="list-stack" aria-live="polite"></div>
+          </div>
+        </section>
+
+        <section class="page-view" data-page="jobs" hidden>
+          <div class="page-container">
+            <div class="page-header">
+              <div>
+                <h1 class="page-title">下载</h1>
+                <p class="page-subtitle">查看应用获取、解密、文件上传和异常记录。任务状态会自动刷新。</p>
+              </div>
+              <div class="page-actions">
+                <button id="refreshJobsButton" class="btn btn-ghost" type="button">刷新任务</button>
+                <a class="btn btn-primary" href="/search" data-route>新建下载</a>
+              </div>
+            </div>
+
+            <div id="jobFilters" class="seg" aria-label="下载状态筛选"></div>
+            <div class="alert" data-tone="warning">安装包为临时文件，服务重启时可能被清除。下载链接过期后请重新创建解密任务。</div>
+            <div id="jobList" class="list-stack" aria-live="polite"></div>
+          </div>
+        </section>
+      </main>
+
+      <nav class="mobile-nav" aria-label="移动端导航">
+        <a href="/" data-route data-nav="home" class="mobile-nav-item">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 11 9-8 9 8v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9Z"/></svg>
+          首页
+        </a>
+        <a href="/search" data-route data-nav="search" class="mobile-nav-item">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m21 21-4.4-4.4M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z"/></svg>
+          搜索
+        </a>
+        <a href="/downloads" data-route data-nav="downloads" class="mobile-nav-item">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 19h16"/></svg>
+          下载
+        </a>
+      </nav>
+    </div>
+
+    <div id="creditModal" class="modal-backdrop" hidden>
+      <section class="modal-card credit-modal-card" role="dialog" aria-modal="true" aria-labelledby="creditModalTitle">
+        <div class="modal-head">
+          <div>
+            <p class="eyebrow">服务额度</p>
+            <h2 id="creditModalTitle" class="modal-title">应用解密次数</h2>
+          </div>
+          <button id="creditModalClose" class="icon-button" type="button" aria-label="关闭">×</button>
+        </div>
+        <div class="credit-balance">
+          <span>当前可用</span>
+          <strong><span data-credit-balance>--</span> 次</strong>
+          <small>每创建一个应用解密任务扣除 1 次；任务最终失败时将自动退回。</small>
+        </div>
+        <form id="redeemCardForm" class="redeem-card-form">
+          <label for="redeemCardInput">兑换服务码</label>
+          <div class="search-line">
+            <input id="redeemCardInput" class="field-input" type="text" placeholder="请输入服务兑换码" autocomplete="off" />
+            <button id="redeemCardButton" class="btn btn-primary" type="submit">立即兑换</button>
+          </div>
+          <p id="redeemCardMessage" class="section-desc">兑换成功后，次数会立即到账。</p>
+        </form>
+        <div class="credit-purchase">
+          <div>
+            <strong>需要更多服务额度？</strong>
+            <p id="creditPurchaseHint" class="section-desc">请在微信公众号回复“购买兑换码”获取购买方式。</p>
+          </div>
+          <button id="purchaseCardButton" class="btn btn-ghost" type="button">购买兑换码</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+    <script type="module" src="/app.js?v=20260802-permission-label"></script>
+  </body>
+</html>

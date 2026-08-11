@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>91iOS Dump 运营管理平台</title>
+    <script>
+      (() => {
+        try {
+          const saved = localStorage.getItem('asspp-admin-theme');
+          const theme = saved || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+          document.documentElement.dataset.theme = theme;
+        } catch {}
+      })();
+    </script>
+    <link rel="stylesheet" href="/styles.css?v=20260727-admin1" />
+    <link rel="stylesheet" href="/admin.css?v=20260805-fullwidth" />
+  </head>
+  <body class="admin-body">
+    <button id="adminThemeToggle" class="admin-theme-toggle" type="button" aria-label="切换为深色模式" title="切换显示模式">
+      <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.66 6.34l1.41-1.41"></path></svg>
+      <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.1A8.5 8.5 0 0 1 9.9 3.5 8.5 8.5 0 1 0 20.5 14.1Z"></path></svg>
+      <span id="adminThemeLabel">深色模式</span>
+    </button>
+    <div id="adminAuth" class="admin-auth" hidden></div>
+
+    <div id="adminApp" class="admin-shell" hidden>
+      <aside class="admin-sidebar">
+        <a class="brand admin-brand" href="/admin" aria-label="91iOS Dump 运营管理平台">
+          <span class="brand-mark" aria-hidden="true">91</span>
+          <span>
+            <strong>91iOS Dump</strong>
+            <small>运营管理平台</small>
+          </span>
+        </a>
+        <nav id="adminNav" class="admin-nav">
+          <button data-section="overview" class="active">总览</button>
+          <button data-section="jobs">任务管理</button>
+          <button data-section="devices">设备管理</button>
+          <button data-section="accounts">Apple ID</button>
+          <button data-section="cards">兑换码管理</button>
+          <button data-section="storage">文件存储</button>
+          <button data-section="notifications">通知管理</button>
+          <button data-section="admins">权限管理</button>
+          <button data-section="audit">安全审计</button>
+        </nav>
+        <div class="admin-session">
+          <span id="adminIdentity">--</span>
+          <button id="adminLogout" class="btn btn-ghost btn-sm" type="button">退出</button>
+        </div>
+      </aside>
+
+      <main class="admin-main">
+        <header class="admin-mobile-header">
+          <strong>91iOS Dump 运营管理平台</strong>
+          <select id="adminMobileNav" class="field-input field-select">
+            <option value="overview">总览</option>
+            <option value="jobs">任务管理</option>
+            <option value="devices">设备管理</option>
+            <option value="accounts">Apple ID</option>
+            <option value="cards">兑换码管理</option>
+            <option value="storage">文件存储</option>
+            <option value="notifications">通知管理</option>
+            <option value="admins">权限管理</option>
+            <option value="audit">安全审计</option>
+          </select>
+        </header>
+
+        <section data-admin-section="overview">
+          <div class="page-header">
+            <div>
+              <p class="admin-eyebrow">运营概览</p>
+              <h1 class="page-title">系统总览</h1>
+              <p class="page-subtitle">集中查看设备运行状态、任务处理进度、账户可用性及系统告警。</p>
+            </div>
+            <button id="refreshOverview" class="btn btn-ghost" type="button">刷新</button>
+          </div>
+          <div id="adminWarning" class="alert" data-tone="warning" hidden></div>
+          <div id="overviewMetrics" class="admin-metrics"></div>
+          <section class="card card-pad">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">设备摘要</h2>
+                <p class="section-desc">展示各设备的在线状态、运行环境、可用空间和当前任务。</p>
+              </div>
+            </div>
+            <div id="overviewDevices" class="admin-table-wrap"></div>
+          </section>
+        </section>
+
+        <section data-admin-section="jobs" hidden>
+          <div class="page-header">
+            <div>
+              <p class="admin-eyebrow">任务管理</p>
+              <h1 class="page-title">任务数据展板</h1>
+              <p class="page-subtitle">先看任务全貌，再点击任一板块展开对应明细，无需一次铺开全部任务。</p>
+            </div>
+            <button id="refreshAdminJobs" class="btn btn-ghost" type="button">刷新</button>
+          </div>
+          <div id="jobBoardMetrics" class="job-board-metrics" aria-label="任务统计"></div>
+          <div id="jobBoardCharts" class="job-board-charts" aria-label="任务趋势与分布"></div>
+          <div id="jobDetailHeader" class="job-detail-header" hidden>
+            <button id="jobDetailBack" class="btn btn-ghost btn-sm" type="button">返回展板</button>
+            <div class="job-detail-title"><strong id="jobDetailTitle"></strong><span id="jobDetailCount" class="job-detail-count"></span></div>
+          </div>
+          <div id="adminJobList" class="list-stack"></div>
+        </section>
+
+        <section data-admin-section="devices" hidden>
+          <div class="page-header">
+            <div>
+              <p class="admin-eyebrow">设备资源</p>
+              <h1 class="page-title">设备管理</h1>
+              <p class="page-subtitle">管理应用解密设备，查看系统版本、运行状态、可用空间和处理能力。</p>
+            </div>
+            <button id="addDeviceButton" class="btn btn-primary" type="button">添加设备</button>
+          </div>
+          <section class="card card-pad" style="margin-bottom:24px">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">全局调度策略</h2>
+                <p class="section-desc">设备组和单设备可覆盖这些默认值。</p>
+              </div>
+            </div>
+            <form id="schedulerForm" class="admin-form-stack"></form>
+          </section>
+          <section class="card card-pad" style="margin-bottom:24px">
+            <div class="section-head">
+              <div>
+                <h2 class="section-title">设备组</h2>
+                <p class="section-desc">优先级依次为主力、普通、备用；测试组只接受管理员锁定任务。</p>
+              </div>
+            </div>
+            <div id="deviceGroupList" class="list-stack"></div>
+          </section>
+          <div id="deviceAdminList" class="list-stack"></div>
+        </section>
+
+        <section data-admin-section="accounts" hidden>
+          <div class="page-header">
+            <div>
+              <p class="admin-eyebrow">账户资源</p>
+              <h1 class="page-title">Apple ID 管理</h1>
+              <p class="page-subtitle">管理 App Store 账户授权信息，并设置账户的适用设备、地区和使用优先级。</p>
+            </div>
+            <div class="admin-actions">
+              <button id="appleLoginButton" class="btn btn-primary" type="button">Apple ID 登录</button>
+              <button id="syncAppleAccountButton" class="btn btn-ghost" type="button">同步设备账户</button>
+              <button id="addAppleAccountButton" class="btn btn-ghost" type="button">导入账户配置</button>
+            </div>
+          </div>
+          <div id="appleAccountList" class="list-stack"></div>
+        </section>
+
+        <section data-admin-section="cards" hidden>
+          <div class="page-header">
+            <div>
+              <p class="admin-eyebrow">兑换与额度</p>
+              <h1 class="page-title">兑换码管理</h1>
+              <p class="page-subtitle">批量创建服务兑换码，并跟踪发放、兑换和剩余额度。</p>
+            </div>
+            <button id="createCardsButton" class="btn btn-primary" type="button">创建兑换码</button>
+          </div>
+          <div id="cardBatchList" class="list-stack"></div>
+          <form id="cardPurchaseForm" class="admin-form-stack" style="margin-top:24px"></form>
+          <section class="card card-pad" style="margin-top:24px">
+            <div class="section-head"><div><h2 class="section-title">用户服务额度</h2><p class="section-desc">查看微信公众号用户当前剩余的应用解密次数。</p></div></div>
+            <div id="userCreditList" class="admin-table-wrap"></div>
+          </section>
+        </section>
+
+        <section data-admin-section="storage" hidden>
+          <div class="page-header">
+            <div>
+              <p class="admin-eyebrow">文件分发</p>
+              <h1 class="page-title">文件存储</h1>
+              <p class="page-subtitle">配置任务文件的存储、分发和保留策略。敏感凭据保存后不会再次显示。</p>
+            </div>
+          </div>
+          <form id="storageForm" class="admin-form-stack"></form>
+        </section>
+
+        <section data-admin-section="notifications" hidden>
+          <div class="page-header">
+            <div>
+              <p class="admin-eyebrow">消息与告警</p>
+              <h1 class="page-title">通知管理</h1>
+              <p class="page-subtitle">配置任务结果通知和系统运行告警，并管理各通知渠道的启用状态。</p>
+            </div>
+          </div>
+          <form id="notificationForm" class="admin-form-stack"></form>
+        </section>
+
+        <section data-admin-section="admins" hidden>
+          <div class="page-header">
+            <div>
+              <p class="admin-eyebrow">访问控制</p>
+              <h1 class="page-title">管理员与角色</h1>
+              <p class="page-subtitle">超级管理员负责系统配置，运营管理员负责设备与任务，审计员仅可查看记录。</p>
+            </div>
+            <button id="addAdminButton" class="btn btn-primary" type="button">添加管理员</button>
+          </div>
+          <div id="adminUserList" class="list-stack"></div>
+        </section>
+
+        <section data-admin-section="audit" hidden>
+          <div class="page-header">
+            <div>
+              <p class="admin-eyebrow">安全审计</p>
+              <h1 class="page-title">安全审计</h1>
+              <p class="page-subtitle">查询管理员登录、任务操作、设备变更、账户管理及敏感配置记录。</p>
+            </div>
+            <button id="refreshAudit" class="btn btn-ghost" type="button">刷新</button>
+          </div>
+          <section class="card card-pad">
+            <div id="auditList" class="admin-table-wrap"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <div id="adminModal" class="admin-modal" hidden>
+      <div class="admin-modal-backdrop" data-close-modal></div>
+      <section class="admin-modal-panel" role="dialog" aria-modal="true">
+        <button class="admin-modal-close" type="button" data-close-modal aria-label="关闭">×</button>
+        <div id="adminModalContent"></div>
+      </section>
+    </div>
+    <div id="adminToast" class="toast" role="status" aria-live="polite" hidden></div>
+    <script type="module" src="/admin.js?v=20260805-sections-polish"></script>
+  </body>
+</html>
