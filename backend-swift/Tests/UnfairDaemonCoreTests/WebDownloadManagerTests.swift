@@ -19,6 +19,12 @@ final class WebDownloadManagerTests: XCTestCase {
             ),
             taskID: task.id
         )
+        let partialURL = ResumableFileDownloader.partialURL(for: URL(fileURLWithPath: task.filePath!))
+        try FileManager.default.createDirectory(
+            at: partialURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("partial".utf8).write(to: partialURL)
         let queue = HoldingDeviceTaskQueue()
 
         let manager = try WebDownloadManager(config: context.config, queue: queue)
@@ -28,6 +34,7 @@ final class WebDownloadManagerTests: XCTestCase {
         XCTAssertEqual(restored.queuePosition, 1)
         XCTAssertEqual(queue.count, 1)
         XCTAssertTrue(restored.logs?.contains(where: { $0.contains("restored persisted queue entry") }) == true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: partialURL.path))
     }
 
     func testFailedRecoverableTaskCanBeQueuedAgain() throws {

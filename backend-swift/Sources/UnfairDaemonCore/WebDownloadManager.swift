@@ -176,7 +176,7 @@ final class WebDownloadManager {
         }
         record.sessionTask?.cancel()
         record.processCancellation?.cancel()
-        let filePath = record.task.filePath
+        let filePath = record.task.filePath ?? (try? taskFileURL(for: record.task).path)
         tasks.removeValue(forKey: id)
         lock.unlock()
 
@@ -235,7 +235,6 @@ final class WebDownloadManager {
             lock.unlock()
             return false
         }
-        let oldPath = record.task.filePath
         record.task.downloadURL = material.downloadURL
         record.task.sinfs = material.sinfs
         record.task.iTunesMetadata = material.iTunesMetadata
@@ -248,7 +247,6 @@ final class WebDownloadManager {
         appendLogLocked(to: &record.task, phase: "download", message: "failed task returned to queue")
         lock.unlock()
 
-        deletePackageFile(path: oldPath)
         persistTasks()
         startDownload(id: id)
         return true
@@ -521,38 +519,32 @@ final class WebDownloadManager {
         guard let url = URL(string: urlString) else {
             throw Abort(.badRequest, reason: "invalid download URL")
         }
-
-        let delegate = WebDownloadDelegate(
-            destination: destination,
-            maxBytes: WebConfig.maxDownloadBytes,
-            progress: { [weak self] written, expected, elapsed, delta in
-                self?.reportProgress(id: taskID, downloaded: written, total: expected, elapsed: elapsed, delta: delta)
-            }
-        )
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 60
-        configuration.timeoutIntervalForResource = TimeInterval(WebConfig.downloadTimeoutSeconds)
-        let operationQueue = OperationQueue()
-        operationQueue.maxConcurrentOperationCount = 1
-        let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: operationQueue)
-        defer {
-            session.invalidateAndCancel()
+        let partialBytes = ((try? FileManager.default.attributesOfItem(
+            atPath: ResumableFileDownloader.partialURL(for: destination).path
+        )[.size]) as? NSNumber)?.int64Value ?? 0
+        if partialBytes > 0 {
+            appendLog(id: taskID, phase: "download", message: "resuming from \(partialBytes) bytes")
         }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("unfaird/1.0", forHTTPHeaderField: "User-Agent")
-        let task = session.downloadTask(with: request)
-        lock.lock()
-        tasks[taskID]?.sessionTask = task
-        lock.unlock()
+        let downloader = ResumableFileDownloader()
         defer {
             lock.lock()
             tasks[taskID]?.sessionTask = nil
             lock.unlock()
         }
-        task.resume()
-        try delegate.wait()
+        try downloader.download(
+            url: url,
+            destination: destination,
+            maxBytes: WebConfig.maxDownloadBytes,
+            timeout: TimeInterval(WebConfig.downloadTimeoutSeconds),
+            progress: { [weak self] written, expected, elapsed, delta in
+                self?.reportProgress(id: taskID, downloaded: written, total: expected, elapsed: elapsed, delta: delta)
+            },
+            taskStarted: { task in
+                self.lock.lock()
+                self.tasks[taskID]?.sessionTask = task
+                self.lock.unlock()
+            }
+        )
         appendLog(id: taskID, phase: "download", message: "download complete")
     }
 
@@ -885,7 +877,10 @@ final class WebDownloadManager {
                 task.status == DownloadStatus.downloading.rawValue ||
                 task.status == DownloadStatus.injecting.rawValue ||
                 task.status == DownloadStatus.decrypting.rawValue {
-                if let path = task.filePath {
+                let interruptedStatus = task.status
+                if (interruptedStatus == DownloadStatus.injecting.rawValue ||
+                    interruptedStatus == DownloadStatus.decrypting.rawValue),
+                   let path = task.filePath {
                     deletePackageFile(path: path)
                 }
                 task.downloadURL = recovery.downloadURL
@@ -896,7 +891,10 @@ final class WebDownloadManager {
                 task.filePath = nil
                 task.error = nil
                 task.errorCode = nil
-                appendLogLocked(to: &task, phase: "download", message: "recoverable task restored to queue")
+                let message = interruptedStatus == DownloadStatus.downloading.rawValue
+                    ? "recoverable partial download restored to queue"
+                    : "recoverable task restored to queue"
+                appendLogLocked(to: &task, phase: "download", message: message)
                 tasks[task.id] = TaskRecord(task: task)
                 needsPersist = true
                 continue
@@ -947,10 +945,16 @@ final class WebDownloadManager {
 
     private func cleanOrphanedPackages() {
         var known = Set<String>()
-        for filePath in tasks.values.compactMap({ $0.task.filePath }) {
-            let sourceURL = URL(fileURLWithPath: filePath).standardizedFileURL
+        for task in tasks.values.map(\.task) {
+            let destination = task.filePath.map(URL.init(fileURLWithPath:)) ??
+                ((task.status == DownloadStatus.pending.rawValue && task.downloadURL != nil)
+                    ? try? taskFileURL(for: task)
+                    : nil)
+            guard let sourceURL = destination?.standardizedFileURL else { continue }
             known.insert(sourceURL.path)
             known.insert(SimulatorIPABuilder.simulatorIpaURL(for: sourceURL).standardizedFileURL.path)
+            known.insert(ResumableFileDownloader.partialURL(for: sourceURL).standardizedFileURL.path)
+            known.insert(ResumableFileDownloader.metadataURL(for: sourceURL).standardizedFileURL.path)
         }
         guard let enumerator = FileManager.default.enumerator(at: packagesDirectory, includingPropertiesForKeys: [.isDirectoryKey]) else {
             return
@@ -1056,6 +1060,7 @@ final class WebDownloadManager {
         if simulatorURL.path.hasPrefix(base.path + "/") {
             try? FileManager.default.removeItem(at: simulatorURL)
         }
+        ResumableFileDownloader.removePartialFiles(for: resolved)
         try? FileManager.default.removeItem(at: resolved)
     }
 
@@ -1143,114 +1148,6 @@ private extension DownloadTask {
         downloadURL = nil
         sinfs = nil
         iTunesMetadata = nil
-    }
-}
-
-private final class WebDownloadDelegate: NSObject, URLSessionDownloadDelegate {
-    private let destination: URL
-    private let maxBytes: Int64
-    private let progress: (Int64, Int64, TimeInterval, Int64) -> Void
-    private let semaphore = DispatchSemaphore(value: 0)
-    private let lock = NSLock()
-    private var result: Result<Void, Error>?
-    private var pendingError: Error?
-    private var completed = false
-    private var lastTime = Date()
-    private var lastBytes: Int64 = 0
-
-    init(destination: URL, maxBytes: Int64, progress: @escaping (Int64, Int64, TimeInterval, Int64) -> Void) {
-        self.destination = destination
-        self.maxBytes = maxBytes
-        self.progress = progress
-    }
-
-    func wait() throws {
-        semaphore.wait()
-        switch result {
-        case .success:
-            return
-        case .failure(let error):
-            throw error
-        case nil:
-            throw Abort(.internalServerError, reason: "download finished without result")
-        }
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didWriteData bytesWritten: Int64,
-        totalBytesWritten: Int64,
-        totalBytesExpectedToWrite: Int64
-    ) {
-        if totalBytesWritten > maxBytes {
-            pendingError = Abort(.payloadTooLarge, reason: "remote ipa limit is 8GB")
-            downloadTask.cancel()
-            return
-        }
-        let now = Date()
-        let elapsed = now.timeIntervalSince(lastTime)
-        if elapsed >= 0.5 {
-            progress(totalBytesWritten, totalBytesExpectedToWrite, elapsed, totalBytesWritten - lastBytes)
-            lastTime = now
-            lastBytes = totalBytesWritten
-        }
-    }
-
-    func urlSession(
-        _ session: URLSession,
-        downloadTask: URLSessionDownloadTask,
-        didFinishDownloadingTo location: URL
-    ) {
-        do {
-            if FileManager.default.fileExists(atPath: destination.path) {
-                try FileManager.default.removeItem(at: destination)
-            }
-            try FileManager.default.moveItem(at: location, to: destination)
-        } catch {
-            pendingError = error
-        }
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        if let http = task.response as? HTTPURLResponse,
-           (200...299).contains(http.statusCode) == false {
-            cleanupDestination()
-            finish(.failure(Abort(.badGateway, reason: "IPA download returned HTTP \(http.statusCode)")))
-            return
-        }
-        if let expectedLength = task.response?.expectedContentLength,
-           expectedLength > maxBytes {
-            cleanupDestination()
-            finish(.failure(Abort(.payloadTooLarge, reason: "remote ipa limit is 8GB")))
-            return
-        }
-        if let pendingError = pendingError {
-            cleanupDestination()
-            finish(.failure(pendingError))
-            return
-        }
-        if let error = error {
-            cleanupDestination()
-            finish(.failure(error))
-            return
-        }
-        finish(.success(()))
-    }
-
-    private func finish(_ result: Result<Void, Error>) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard completed == false else {
-            return
-        }
-        completed = true
-        self.result = result
-        semaphore.signal()
-    }
-
-    private func cleanupDestination() {
-        try? FileManager.default.removeItem(at: destination)
     }
 }
 
