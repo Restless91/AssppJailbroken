@@ -1,4 +1,4 @@
-name: Build iOS Deb
+name: Build iOS Debs
 
 on:
   workflow_dispatch:
@@ -19,7 +19,6 @@ on:
 
 env:
   THEOS: ${{ github.workspace }}/theos
-  THEOS_PACKAGE_SCHEME: rootless
   UNFAIR_REPOSITORY: lbr77/unfair
   UNFAIR_REF: main
   HOMEBREW_NO_AUTO_UPDATE: 1
@@ -27,16 +26,29 @@ env:
 
 jobs:
   build:
-    name: Build rootless iOS deb
+    name: Build ${{ matrix.variant }} deb
     runs-on: macos-26
     permissions:
-      contents: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: iphone8
+            profile: rootless
+            architecture: iphoneos-arm64
+          - variant: iphone11
+            profile: taurine
+            architecture: iphoneos-arm
+          - variant: iphone15
+            profile: rootless
+            architecture: iphoneos-arm64
 
     steps:
-      - name: Checkout AssppWeb
+      - name: Checkout AssppJailbroken
         uses: actions/checkout@v6
         with:
-          path: AssppWeb
+          path: AssppJailbroken
 
       - name: Checkout UnfairKit dependency
         uses: actions/checkout@v6
@@ -45,34 +57,33 @@ jobs:
           ref: ${{ env.UNFAIR_REF }}
           path: unfair
 
-      - name: Validate release version
-        if: startsWith(github.ref, 'refs/tags/v')
-        working-directory: AssppWeb
+      - name: Validate unified release version
+        working-directory: AssppJailbroken
         shell: bash
         run: |
           set -euo pipefail
-          tag_version="${GITHUB_REF_NAME#v}"
-          package_version="$(awk '/^Version:/ { print $2; exit }' backend-swift/control)"
-          test "$tag_version" = "$package_version" || {
-            echo "Tag v${tag_version} does not match backend-swift/control ${package_version}" >&2
-            exit 1
-          }
+          expected="$(awk '/^Version:/ { print $2; exit }' backend-swift/control)"
+          actual="$(awk '/^Version:/ { print $2; exit }' "backend-swift/packaging/control.${{ matrix.variant }}")"
+          test "$expected" = "$actual"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            test "${GITHUB_REF_NAME#v}" = "$expected" || {
+              echo "Tag $GITHUB_REF_NAME does not match package version $expected" >&2
+              exit 1
+            }
+          fi
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: AssppWeb/frontend/package-lock.json
+          cache-dependency-path: AssppJailbroken/frontend/package-lock.json
 
       - name: Select Xcode 26
         shell: bash
         run: |
           set -euo pipefail
           xcode_path="$(find /Applications -maxdepth 1 -name 'Xcode_26*.app' -print | sort | tail -n 1)"
-          if [[ -z "$xcode_path" ]]; then
-            xcode_path="/Applications/Xcode.app"
-          fi
+          if [[ -z "$xcode_path" ]]; then xcode_path="/Applications/Xcode.app"; fi
           sudo xcode-select -s "$xcode_path/Contents/Developer"
           xcodebuild -version
           swift --version
@@ -81,9 +92,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ env.THEOS }}
-          key: theos-${{ runner.os }}-${{ hashFiles('AssppWeb/.github/workflows/deb.yml') }}
-          restore-keys: |
-            theos-${{ runner.os }}-
+          key: theos-${{ runner.os }}-${{ hashFiles('AssppJailbroken/.github/workflows/deb.yml') }}
+          restore-keys: theos-${{ runner.os }}-
 
       - name: Install Theos
         shell: bash
@@ -91,72 +101,94 @@ jobs:
           set -euo pipefail
           brew list dpkg >/dev/null 2>&1 || brew install dpkg
           brew list ldid >/dev/null 2>&1 || brew install ldid
-          if [[ -f "$THEOS/makefiles/common.mk" && -x "$THEOS/bin/ldid" ]]; then
-            exit 0
+          if [[ ! -f "$THEOS/makefiles/common.mk" ]]; then
+            rm -rf "$THEOS"
+            git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
           fi
-          rm -rf "$THEOS"
-          git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
           mkdir -p "$THEOS/bin"
           ln -sf "$(command -v ldid)" "$THEOS/bin/ldid"
-          test -f "$THEOS/makefiles/common.mk"
-          test -x "$THEOS/bin/ldid"
 
-      - name: Verify Apple build tools
+      - name: Verify bundled Taurine runtime assets
+        if: matrix.profile == 'taurine'
+        working-directory: AssppJailbroken
         shell: bash
         run: |
           set -euo pipefail
-          xcodebuild -version
-          swift --version
-          xcrun --sdk iphoneos --show-sdk-path
-          xcrun --find swift-stdlib-tool
-          "$THEOS/bin/ldid" -v || true
+          runner="$PWD/backend-swift/vendor/taurine/bootstrap/UnfairRuntimeRunner"
+          dumper="$PWD/backend-swift/vendor/taurine/bootstrap/UnfairRuntimeDumper.dylib"
+          echo 'd701ee770f9a1304838f8ab02c15aea6b05f290a6d1d48dbaa3ece616317c5ea' " $runner" | shasum -a 256 -c -
+          echo 'db647eefb4e49f9729b36ebedf8adf2e74ffda0cc0d944ade5a00c4c943bc8b3' " $dumper" | shasum -a 256 -c -
+          file "$runner" | grep -q 'arm64'
+          file "$dumper" | grep -q 'arm64'
+          echo "TAURINE_RUNTIME_RUNNER=$runner" >> "$GITHUB_ENV"
+          echo "TAURINE_RUNTIME_DUMPER=$dumper" >> "$GITHUB_ENV"
 
-      - name: Build deb package
+      - name: Build profile package
+        working-directory: AssppJailbroken
         shell: bash
         run: |
           set -euo pipefail
-          make -C AssppWeb build THEOS="$THEOS" THEOS_PACKAGE_SCHEME="$THEOS_PACKAGE_SCHEME"
+          version="$(awk '/^Version:/ { print $2; exit }' "backend-swift/packaging/control.${{ matrix.variant }}")"
+          find backend-swift/debs -maxdepth 1 -type f -name "wiki.qaq.unfaird_${version}_*" -delete
+          make -C backend-swift package \
+            FINALPACKAGE=1 \
+            THEOS="$THEOS" \
+            ASSPPWEB_DIR=.. \
+            DEVICE_PROFILE="${{ matrix.profile }}" \
+            DEVICE_VARIANT="${{ matrix.variant }}" \
+            TAURINE_RUNTIME_RUNNER="${TAURINE_RUNTIME_RUNNER:-}" \
+            TAURINE_RUNTIME_DUMPER="${TAURINE_RUNTIME_DUMPER:-}"
 
-      - name: Inspect deb package
+      - name: Audit and rename package
         id: deb
+        working-directory: AssppJailbroken
         shell: bash
         run: |
           set -euo pipefail
-          deb="$(ls -t AssppWeb/backend-swift/debs/wiki.qaq.unfaird_*_iphoneos-arm64.deb | head -n 1)"
-          test -f "$deb"
-          echo "path=$deb" >> "$GITHUB_OUTPUT"
-          echo "name=$(basename "$deb" .deb)" >> "$GITHUB_OUTPUT"
-          dpkg-deb --info "$deb"
-          dpkg-deb --contents "$deb" | sed -n '1,160p'
-          shasum -a 256 "$deb" > "${deb}.sha256"
+          version="$(awk '/^Version:/ { print $2; exit }' "backend-swift/packaging/control.${{ matrix.variant }}")"
+          source_deb="$(find backend-swift/debs -maxdepth 1 -type f -name "wiki.qaq.unfaird_${version}_*.deb" -print | head -n 1)"
+          test -f "$source_deb"
+          mkdir -p release
+          output="release/wiki.qaq.unfaird_${version}_${{ matrix.variant }}_${{ matrix.architecture }}.deb"
+          cp "$source_deb" "$output"
+          test "$(dpkg-deb -f "$output" Version)" = "$version"
+          test "$(dpkg-deb -f "$output" Architecture)" = "${{ matrix.architecture }}"
+          dpkg-deb -f "$output" Name Description
+          if [[ "${{ matrix.profile }}" == taurine ]]; then
+            dpkg-deb --contents "$output" | grep -q 'UnfairRuntimeRunner'
+            dpkg-deb --contents "$output" | grep -q 'UnfairRuntimeDumper.dylib'
+          fi
+          shasum -a 256 "$output" > "${output}.sha256"
+          echo "path=$output" >> "$GITHUB_OUTPUT"
+          echo "name=unfaird-${{ matrix.variant }}-${version}" >> "$GITHUB_OUTPUT"
 
-      - name: Upload deb artifact
-        uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.deb.outputs.name }}
           path: |
-            ${{ steps.deb.outputs.path }}
-            ${{ steps.deb.outputs.path }}.sha256
+            AssppJailbroken/${{ steps.deb.outputs.path }}
+            AssppJailbroken/${{ steps.deb.outputs.path }}.sha256
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish deb to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        working-directory: AssppWeb
+  publish:
+    name: Publish three device debs
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          pattern: unfaird-*
+          path: release
+          merge-multiple: true
+
+      - name: Upload unified device release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" \
-              --repo "$GITHUB_REPOSITORY" \
-              --verify-tag \
-              --generate-notes \
-              --title "$GITHUB_REF_NAME"
-          fi
-          gh release upload "$GITHUB_REF_NAME" \
-            "${{ steps.deb.outputs.path }}" \
-            "${{ steps.deb.outputs.path }}.sha256" \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
+          gh release upload "$GITHUB_REF_NAME" release/* --repo "$GITHUB_REPOSITORY" --clobber

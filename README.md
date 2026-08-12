@@ -191,8 +191,9 @@ OpenSSH 用于部署和诊断；AppSync/appinst 用于安装下载得到的加�
 仓库包含两条自动化工作流：
 
 - `CI`：每次 push 和 Pull Request 自动运行前端测试/构建、综合平台语法检查和测试。
-- `Build release artifacts`：推送 `vX.Y.Z` 标签时，在 GitHub 的 `macos-26` Runner 自动构建
-  Dopamine/rootless deb，并在 Linux Runner 生成 iStoreOS 综合平台压缩包和 SHA-256 清单。
+- `Build iOS Debs`：在 GitHub 的 `macos-26` Runner 并行构建 iPhone8、iPhone11、iPhone15
+  三个相同版本号的设备 Profile Deb，并生成各自 SHA-256。
+- `Build release artifacts`：在 Linux Runner 生成 iStoreOS 综合平台压缩包和 SHA-256 清单。
 
 发布版本前，先把 `backend-swift/control` 的 `Version` 更新为目标版本并提交，然后创建同版本标签：
 
@@ -201,13 +202,12 @@ git tag v0.1.15
 git push origin v0.1.15
 ```
 
-工作流会把构建结果上传到 Actions Artifacts；标签对应的 GitHub Release 已存在时，还会自动把 deb、
-iStoreOS 压缩包和校验清单附加到该 Release。也可在 GitHub Actions 页面手动运行，并指定
-手动运行综合平台发布包构建。
+工作流会把构建结果上传到 Actions Artifacts；标签对应的 GitHub Release 已存在时，还会自动把三个
+Deb、iStoreOS 压缩包和校验清单附加到该 Release。也可在 GitHub Actions 页面手动运行。
 
-rootless 自动构建不需要连接 iPhone，也不包含设备密码。Taurine/Procursus 包依赖专用的
-`UnfairRuntimeRunner` 和 `UnfairRuntimeDumper.dylib`，在这两个发布资产进入受保护构建源之前，
-仍应使用本机受控构建流程，避免发布缺少运行时的无效 deb。
+自动构建不需要连接 iPhone，也不包含设备密码。iPhone11 Profile 使用从已验证历史 `0.1.7` Deb
+审计并提取的版本化 `UnfairRuntimeRunner`/`UnfairRuntimeDumper.dylib`；CI 会做固定 SHA-256 和 arm64
+架构校验，随后与当前源码 daemon 一起重新打包。任何资产不一致都会阻止发布。
 
 ```bash
 git clone https://github.com/lbr77/AssppJailbroken.git
@@ -229,17 +229,37 @@ make install
 按设备生成 deb：
 
 ```bash
-# Dopamine/rootless（iPhone 8/15）
+# iPhone 8：Dopamine/rootless，main-only 扩展策略
 cd backend-swift
-make package FINALPACKAGE=1 DEVICE_PROFILE=rootless
+make package FINALPACKAGE=1 DEVICE_PROFILE=rootless DEVICE_VARIANT=iphone8
+
+# iPhone 15：Dopamine 2/rootless，compatible 扩展策略
+make package FINALPACKAGE=1 DEVICE_PROFILE=rootless DEVICE_VARIANT=iphone15
 
 # Taurine/Procursus（iPhone 11）
-make package FINALPACKAGE=1 DEVICE_PROFILE=taurine \
+make package FINALPACKAGE=1 DEVICE_PROFILE=taurine DEVICE_VARIANT=iphone11 \
   TAURINE_RUNTIME_RUNNER=/absolute/path/to/unfair-swift \
   TAURINE_RUNTIME_DUMPER=/absolute/path/to/UnfairRuntimeDumper.dylib
 ```
 
 Taurine 构建会拒绝缺失或不可执行的 runtime runner/dumper，避免生成能安装但不能砸壳的发布包。
+
+三个 Profile 的 Debian `Package` 均为 `wiki.qaq.unfaird`，版本统一为 `0.1.15`；安装时会升级同一个
+daemon。区别只存在于文件名、包内 `Name`/`Description`、rootless/rootful 布局及运行时 Adapter：
+
+| Deb Profile | 设备与系统 | 越狱环境 | 配套插件/运行时 | 默认策略 |
+| --- | --- | --- | --- | --- |
+| `iphone8` | iPhone 8 Plus / iOS 16.2 | Dopamine rootless | OpenSSH、AppSync Unified、appinst、ElleKit、libjailbreak | main-only、batch 2 |
+| `iphone11` | iPhone 11 / iOS 14.3 | Taurine/Procursus rootful | OpenSSH、AppSync Unified、appinst、libhooker、libkernrw；包内含 runner/dumper | compatible、batch 4 |
+| `iphone15` | iPhone 15 / iOS 17.3 | Dopamine 2 rootless | OpenSSH、AppSync Unified、appinst、ElleKit、libjailbreak | compatible、batch 8 |
+
+发布文件名为：
+
+```text
+wiki.qaq.unfaird_0.1.15_iphone8_iphoneos-arm64.deb
+wiki.qaq.unfaird_0.1.15_iphone11_iphoneos-arm.deb
+wiki.qaq.unfaird_0.1.15_iphone15_iphoneos-arm64.deb
+```
 
 ### 当前发布包与回退
 

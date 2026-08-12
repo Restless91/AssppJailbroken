@@ -1,11 +1,11 @@
 Package: wiki.qaq.unfaird
-Name: unfaird (iPhone 15)
+Name: unfaird (iPhone 8)
 Version: 0.1.15
 Architecture: iphoneos-arm64
-Description: Asspp on-device IPA decrypt daemon for iPhone 15 family.
- Profile: iOS 17.3, Dopamine 2 rootless, A16/arm64e target, builtin process dump.
+Description: Asspp on-device IPA decrypt daemon for iPhone 8/8 Plus.
+ Profile: iOS 16.2, Dopamine rootless, arm64, builtin libjailbreak process dump.
  Requires on device: OpenSSH, AppSync Unified, appinst, ElleKit and libjailbreak.dylib.
- Default policy: compatible extensions, batch size 8, 512 MB Jetsam limit.
+ Default policy: main-only extensions, batch size 2, 512 MB Jetsam limit.
 Section: Utilities
 Maintainer: LiBr <me@nvme0n1p.dev>
 Author: LiBr <me@nvme0n1p.dev>

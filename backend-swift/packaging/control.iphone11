@@ -1,0 +1,15 @@
+Package: wiki.qaq.unfaird
+Name: unfaird (iPhone 11 Taurine)
+Version: 0.1.15
+Architecture: iphoneos-arm
+Description: Asspp on-device IPA decrypt daemon for iPhone 11.
+ Profile: iOS 14.3, Taurine/Procursus rootful, arm64, kernrw runtime adapter.
+ Requires on device: OpenSSH, AppSync Unified, appinst, libhooker and Procursus/libkernrw.
+ Includes verified UnfairRuntimeRunner, UnfairRuntimeDumper and fouldecrypt.kernrw adapters.
+ Default policy: compatible extensions, batch size 4, 512 MB Jetsam limit.
+Section: Utilities
+Maintainer: LiBr <me@nvme0n1p.dev>
+Author: LiBr <me@nvme0n1p.dev>
+Depends: firmware (>= 14.0)
+Provides: wiki.qaq.assppweb
+Replaces: wiki.qaq.assppweb

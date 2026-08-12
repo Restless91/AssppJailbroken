@@ -2,6 +2,7 @@ SHELL := /bin/bash
 
 DEVICE_HOST ?=
 DEVICE_PROFILE ?= rootless
+DEVICE_VARIANT ?= iphone15
 THEOS ?= $(HOME)/theos
 THEOS_PACKAGE_SCHEME ?= rootless
 THEOS_PACKAGE_DIR_NAME ?= debs
@@ -32,10 +33,11 @@ SWIFT_STDLIB_TOOL ?= $(shell xcrun --find swift-stdlib-tool 2>/dev/null)
 SWIFT_55_IPHONEOS_LIB_DIR ?= $(shell dirname "$$(xcrun --find swiftc 2>/dev/null)")/../lib/swift-5.5/iphoneos
 TAURINE_RUNTIME_RUNNER ?=
 TAURINE_RUNTIME_DUMPER ?=
+PROFILE_CONTROL := packaging/control.$(DEVICE_VARIANT)
 
 IOS_SWIFT_FLAGS := --triple $(IOS_TARGET) --sdk "$(IPHONEOS_SDK_PATH)"
 
-.PHONY: all build release ios-release assppweb-frontend mac-install mac-uninstall generate-build-info clean-package
+.PHONY: all build release ios-release assppweb-frontend mac-install mac-uninstall generate-build-info validate-profile-control clean-package
 
 all:: ios-release
 
@@ -98,6 +100,12 @@ generate-build-info:
 	timestamp="$$(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
 	printf 'enum BuildInfo {\n    static let commit = "%s"\n    static let timestamp = "%s"\n}\n' "$$commit" "$$timestamp" > "$(BUILD_INFO)"
 
+validate-profile-control:
+	@set -euo pipefail; \
+	if [[ ! -f "$(PROFILE_CONTROL)" ]]; then echo "unknown DEVICE_VARIANT: $(DEVICE_VARIANT)" >&2; exit 1; fi; \
+	if [[ "$(DEVICE_PROFILE)" == "taurine" && "$(DEVICE_VARIANT)" != "iphone11" ]]; then echo "taurine profile requires DEVICE_VARIANT=iphone11" >&2; exit 1; fi; \
+	if [[ "$(DEVICE_PROFILE)" != "taurine" && "$(DEVICE_VARIANT)" == "iphone11" ]]; then echo "iphone11 requires DEVICE_PROFILE=taurine" >&2; exit 1; fi
+
 clean-package:
 	rm -rf "$(IOS_BUILD_DIR)" ".theos"
 	@echo "Preserved versioned release packages in $(THEOS_PACKAGE_DIR_NAME)"
@@ -107,7 +115,7 @@ ifneq ($(filter $(THEOS_GOALS),$(MAKECMDGOALS)),)
 include $(THEOS)/makefiles/common.mk
 include $(THEOS_MAKE_PATH)/rules.mk
 
-after-stage:: ios-release assppweb-frontend
+after-stage:: validate-profile-control ios-release assppweb-frontend
 	@set -euo pipefail; \
 	prefix="$(THEOS_PACKAGE_INSTALL_PREFIX)"; \
 	package_runner=""; \
@@ -149,4 +157,9 @@ after-stage:: ios-release assppweb-frontend
 		-e "s|@PACKAGE_RUNNER@|$$package_runner|g" \
 		packaging/wiki.qaq.unfaird.plist.in > "$(THEOS_STAGING_DIR)/Library/LaunchDaemons/$(PACKAGE_NAME).plist"; \
 	chmod 0644 "$(THEOS_STAGING_DIR)/Library/LaunchDaemons/$(PACKAGE_NAME).plist"
+
+before-package:: validate-profile-control
+	@set -euo pipefail; \
+	install -d "$(THEOS_STAGING_DIR)/DEBIAN"; \
+	install -m 0644 "$(PROFILE_CONTROL)" "$(THEOS_STAGING_DIR)/DEBIAN/control"
 endif
