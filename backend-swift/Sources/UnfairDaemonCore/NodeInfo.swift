@@ -16,6 +16,9 @@ struct NodeInfoResponse: Content {
         let trollStoreInstall: Bool
         let structuredDecryptEvents: Bool
         let cryptidReport: Bool
+        let resumableBatches: Bool
+        let adaptiveBatchSize: Bool
+        let extensionPolicies: [String]
     }
 
     let status: String
@@ -58,7 +61,10 @@ struct NodeInfoResponse: Content {
                     "/Applications/TrollStoreLite.app/trollstorehelper"
                 ]),
                 structuredDecryptEvents: false,
-                cryptidReport: true
+                cryptidReport: true,
+                resumableBatches: PackageRunnerResolver.supportsResumableBatches(),
+                adaptiveBatchSize: true,
+                extensionPolicies: ExtensionDecryptionPolicy.allCases.map(\.rawValue)
             )
         )
     }

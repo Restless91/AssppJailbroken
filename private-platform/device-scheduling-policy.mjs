@@ -19,7 +19,10 @@ export function evaluateDeviceScheduling(device, job, config = {}) {
   const compatibility = evaluateDeviceCompatibility(device, job);
   if (!compatibility.compatible) return compatibility;
 
-  const readiness = evaluateDeviceDecryptReadiness(device);
+  const readiness = evaluateDeviceDecryptReadiness(device, {
+    resumableBatches: Number(job?.software?.fileSizeBytes || 0) >= 800 * 1024 * 1024,
+    extensionPolicy: job?.extensionDecryptionPolicy
+  });
   if (!readiness.ready) return { eligible: false, ...readiness };
 
   const packageSize = Number(job?.software?.fileSizeBytes || 0);

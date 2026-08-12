@@ -94,7 +94,8 @@ final class WebDownloadManager {
         _ request: CreateDownloadRequest,
         validateAppleURL: Bool = true,
         forceExtensionDecryption: Bool? = nil,
-        extensionDecryptionPolicy: ExtensionDecryptionPolicy? = nil
+        extensionDecryptionPolicy: ExtensionDecryptionPolicy? = nil,
+        initialBatchSize: Int? = nil
     ) throws -> DownloadTask {
         if validateAppleURL {
             try validateDownloadURL(request.downloadURL)
@@ -133,7 +134,19 @@ final class WebDownloadManager {
             extensionDecryptionPolicy: ExtensionDecryptionPolicy.resolved(
                 explicit: extensionDecryptionPolicy,
                 legacyForce: forceExtensionDecryption
-            )
+            ),
+            decryptCheckpoint: initialBatchSize.map { size in
+                DecryptCheckpoint(
+                    phase: .queued,
+                    inputSize: nil,
+                    attempt: 1,
+                    batchSize: AdaptiveBatchPolicy.clampedInitialBatchSize(size),
+                    completedMachOCount: 0,
+                    totalMachOCount: nil,
+                    currentPath: nil,
+                    updatedAt: currentTimestampString()
+                )
+            }
         )
         var loggedTask = task
         appendLogLocked(to: &loggedTask, phase: "download", message: "queued \(request.software.name) \(request.software.version)")
@@ -165,7 +178,8 @@ final class WebDownloadManager {
             iTunesMetadata: request.iTunesMetadata
         ), validateAppleURL: false,
            forceExtensionDecryption: request.forceExtensionDecryption,
-           extensionDecryptionPolicy: request.extensionDecryptionPolicy)
+           extensionDecryptionPolicy: request.extensionDecryptionPolicy,
+           initialBatchSize: request.initialBatchSize)
     }
 
     func deleteTask(id: String) -> Bool {
@@ -636,7 +650,7 @@ final class WebDownloadManager {
             phase: .preparing,
             inputSize: inputSize,
             attempt: 1,
-            batchSize: AdaptiveBatchPolicy.initialBatchSize,
+            batchSize: tasks[taskID]?.task.decryptCheckpoint?.batchSize ?? AdaptiveBatchPolicy.initialBatchSize,
             completedMachOCount: 0,
             totalMachOCount: nil,
             currentPath: nil,

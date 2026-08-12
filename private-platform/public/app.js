@@ -14,7 +14,7 @@ const refreshButton = document.querySelector('#refreshButton');
 const syncAccountButton = document.querySelector('#syncAccountButton');
 const refreshJobsButton = document.querySelector('#refreshJobsButton');
 const reloadTopAppsButton = document.querySelector('#reloadTopAppsButton');
-const forceExtensionToggle = document.querySelector('#forceExtensionToggle');
+const extensionPolicySelect = document.querySelector('#extensionPolicySelect');
 const searchForm = document.querySelector('#searchForm');
 const searchInput = document.querySelector('#searchInput');
 const searchCountry = document.querySelector('#searchCountry');
@@ -499,7 +499,7 @@ function jobCardMarkup(job) {
           <p class="download-meta">${escapeHtml(job.software?.bundleID || job.app.bundleId)} · ${formatDate(job.createdAt)}</p>
           <div class="chip-row">
             ${job.unfairdTaskId ? `<span class="pill neutral">任务 ${escapeHtml(shortId(job.unfairdTaskId))}</span>` : ''}
-            ${job.forceExtensionDecryption ? '<span class="pill neutral">应用扩展模式</span>' : '<span class="pill neutral">稳定模式</span>'}
+            <span class="pill neutral">${escapeHtml(extensionPolicyLabel(job.extensionDecryptionPolicy))}</span>
             ${renderStoragePill(job)}
           </div>
           ${renderQueueInfo(job)}
@@ -668,7 +668,7 @@ async function createSoftwareJob(appId, button, source, options = {}) {
         country: storefront,
         storefront,
         externalVersionId: options.externalVersionId || undefined,
-        forceExtensionDecryption: Boolean(forceExtensionToggle.checked)
+        extensionDecryptionPolicy: extensionPolicySelect?.value === 'auto' ? undefined : extensionPolicySelect?.value
       })
     });
     const versionText = options.externalVersionId ? `（历史版本 ${options.externalVersionId}）` : '';
@@ -683,6 +683,10 @@ async function createSoftwareJob(appId, button, source, options = {}) {
   } finally {
     setButtonBusy(button, false, resetLabel);
   }
+}
+
+function extensionPolicyLabel(value) {
+  return { main_only: '仅主程序', compatible: '兼容扩展', strict: '严格扩展' }[value] || '自动策略';
 }
 
 async function maybeRefreshNotificationAuthorization() {

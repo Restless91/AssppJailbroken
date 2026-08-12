@@ -76,6 +76,7 @@ struct CreateExternalURLDownloadRequest: Content {
     var iTunesMetadata: String?
     var forceExtensionDecryption: Bool?
     var extensionDecryptionPolicy: ExtensionDecryptionPolicy?
+    var initialBatchSize: Int?
 }
 
 struct ITunesSearchResponse: Decodable {

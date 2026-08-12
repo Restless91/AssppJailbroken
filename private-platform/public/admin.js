@@ -893,7 +893,7 @@ function renderSchedulerForm(value) {
       <label class="admin-field"><span>所需空间安全系数</span><input class="field-input" type="number" min="1" max="10" step="0.1" name="requiredSpaceMultiplier" value="${escapeHtml(value.requiredSpaceMultiplier)}"></label>
       <label class="admin-field"><span>最低可用空间（GB）</span><input class="field-input" type="number" min="0" step="0.1" name="minimumFreeGB" value="${escapeHtml((Number(value.minimumFreeBytes || 0) / 1024 / 1024 / 1024).toFixed(1))}"></label>
       <label class="admin-field"><span>砸壳额外开销（GB）</span><input class="field-input" type="number" min="0" step="0.1" name="storageOverheadGB" value="${escapeHtml((Number(value.storageOverheadBytes || 0) / 1024 / 1024 / 1024).toFixed(1))}"></label>
-      <label class="admin-field"><span>应用扩展默认策略</span><select class="field-input field-select" name="skipExtensions"><option value="true" ${value.skipExtensions === true ? 'selected' : ''}>跳过应用扩展</option><option value="false" ${value.skipExtensions !== true ? 'selected' : ''}>尝试解密应用扩展</option></select></label>
+      <label class="admin-field"><span>应用扩展默认策略</span><select class="field-input field-select" name="extensionDecryptionPolicy">${extensionPolicyOptions(value.extensionDecryptionPolicy)}</select></label>
     </div>
     <div class="admin-form-actions"><button class="btn btn-primary" type="submit">保存全局策略</button></div>
   `;
@@ -936,7 +936,7 @@ function openGroupForm(group) {
     <form id="groupForm" class="admin-auth-form">
       <label class="admin-field"><span>默认权重</span><input class="field-input" name="defaultWeight" type="number" min="1" max="100" value="${escapeHtml(group.defaultWeight)}"></label>
       <label class="admin-field"><span>最多执行次数</span><input class="field-input" name="config.maxAttemptsPerDevice" type="number" min="1" max="10" value="${escapeHtml(config.maxAttemptsPerDevice || '')}"></label>
-      <label class="admin-field"><span>应用扩展处理策略</span><select class="field-input field-select" name="config.skipExtensions"><option value="">继承全局设置</option><option value="true" ${config.skipExtensions === true ? 'selected' : ''}>跳过应用扩展</option><option value="false" ${config.skipExtensions === false ? 'selected' : ''}>尝试解密应用扩展</option></select></label>
+      <label class="admin-field"><span>应用扩展处理策略</span><select class="field-input field-select" name="config.extensionDecryptionPolicy">${extensionPolicyOptions(config.extensionDecryptionPolicy, true)}</select></label>
       <button class="btn btn-primary" type="submit">保存设备组</button>
     </form>
   `);
@@ -944,7 +944,7 @@ function openGroupForm(group) {
     event.preventDefault();
     const value = formObject(new FormData(event.currentTarget));
     value.config ||= {};
-    if (value.config.skipExtensions === '') delete value.config.skipExtensions;
+    if (value.config.extensionDecryptionPolicy === '') delete value.config.extensionDecryptionPolicy;
     if (value.config.maxAttemptsPerDevice === '') delete value.config.maxAttemptsPerDevice;
     await api(`/api/admin/device-groups/${encodeURIComponent(group.id)}`, {
       method: 'PATCH',
@@ -961,6 +961,7 @@ function deviceCard(device) {
   const vnode = device.vnodeCurrent == null ? '未知' : `${device.vnodeCurrent} / ${device.vnodeLimit || '?'}`;
   const build = device.buildCommit ? String(device.buildCommit).slice(0, 12) : '待采集';
   const capabilities = deviceCapabilitySummary(device.capabilities);
+  const profile = device.capabilityProfile || {};
   return `
     <article class="admin-device-card">
       <div class="admin-device-head">
@@ -984,6 +985,9 @@ function deviceCard(device) {
         <div><span>vnode</span><strong>${vnode}</strong></div>
         <div><span>daemon 构建</span><strong>${escapeHtml(build)}</strong></div>
         <div><span>砸壳能力</span><strong>${escapeHtml(capabilities)}</strong></div>
+        <div><span>设备画像</span><strong>${escapeHtml(`${profile.generation || 'unknown'} · 批大小 ${profile.batchSize || '--'} · ${extensionPolicyLabel(profile.extensionPolicy)}`)}</strong></div>
+        <div><span>历史表现</span><strong>${escapeHtml(`${Math.round(Number(profile.successRate || 0) * 100)}% 成功 · ${profile.attempts || 0} 次 · 评分 ${Number.isFinite(profile.score) ? profile.score : '暂停'}`)}</strong></div>
+        <div><span>资源状态</span><strong>${escapeHtml(`${device.thermalState || 'unknown'} · vnode ${profile.vnodeRatio ? Math.round(profile.vnodeRatio * 100) + '%' : '未知'}`)}</strong></div>
       </div>
       <div class="admin-device-head" style="margin-top:16px">
         <span class="badge ${device.online ? 'success' : 'neutral'}">${device.online ? '在线' : '离线'} · ${escapeHtml(device.groupName || device.priorityClass)}</span>
@@ -998,6 +1002,18 @@ function deviceCard(device) {
       </div>
     </article>
   `;
+}
+
+function extensionPolicyLabel(value) {
+  return { main_only: '仅主程序', compatible: '兼容扩展', strict: '严格扩展' }[value] || value || '--';
+}
+
+function extensionPolicyOptions(selected = 'auto', inherited = false) {
+  const values = inherited
+    ? [['', '继承上级设置']]
+    : [['auto', '自动（按设备画像）']];
+  values.push(['main_only', '仅主程序'], ['compatible', '兼容扩展'], ['strict', '严格扩展']);
+  return values.map(([value, label]) => `<option value="${value}" ${selected === value ? 'selected' : ''}>${label}</option>`).join('');
 }
 
 function deviceCapabilitySummary(capabilities = {}) {
@@ -1025,7 +1041,7 @@ function openDeviceForm(device = null) {
       <label class="admin-field"><span>设备组</span><select class="field-input field-select" name="groupId">${groupOptions}</select></label>
       <label class="admin-field"><span>组内权重（1–100）</span><input class="field-input" name="weight" type="number" min="1" max="100" value="${device?.weight || 50}"></label>
       <label class="admin-field"><span>最多执行次数（留空继承）</span><input class="field-input" name="config.maxAttemptsPerDevice" type="number" min="1" max="10" value="${escapeHtml(device?.config?.maxAttemptsPerDevice || '')}"></label>
-      <label class="admin-field"><span>应用扩展处理策略</span><select class="field-input field-select" name="config.skipExtensions"><option value="">继承设备组设置</option><option value="true" ${device?.config?.skipExtensions === true ? 'selected' : ''}>跳过应用扩展</option><option value="false" ${device?.config?.skipExtensions === false ? 'selected' : ''}>尝试解密应用扩展</option></select></label>
+      <label class="admin-field"><span>应用扩展处理策略</span><select class="field-input field-select" name="config.extensionDecryptionPolicy">${extensionPolicyOptions(device?.config?.extensionDecryptionPolicy, true)}</select></label>
       <div class="admin-form-actions"><button class="btn btn-primary" type="submit">保存并探测</button></div>
     </form>
   `);
@@ -1035,7 +1051,7 @@ function openDeviceForm(device = null) {
     data.weight = Number(data.weight);
     data.priorityClass = data.groupId;
     data.config ||= {};
-    if (data.config.skipExtensions === '') delete data.config.skipExtensions;
+    if (data.config.extensionDecryptionPolicy === '') delete data.config.extensionDecryptionPolicy;
     if (data.config.maxAttemptsPerDevice === '') delete data.config.maxAttemptsPerDevice;
     if (!data.accessToken) delete data.accessToken;
     try {

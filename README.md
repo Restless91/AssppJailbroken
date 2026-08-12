@@ -299,6 +299,16 @@ unfaird `0.1.14` 保持一致：`max(2 GiB, IPA × 3 + 512 MiB)`；设备的 `pe
 Header 传递；Compose 默认启用只读根文件系统、移除 capabilities、`no-new-privileges`、PID/内存/
 CPU 限额和受限 `/tmp`。
 
+### 多代 iPhone 能力画像（本地开发版）
+
+调度器会根据机型、iOS、解密 Provider、历史成功/失败、Jetsam、温度、vnode 和 IPA 大小生成
+设备画像，并为每次尝试保存评分、批大小、扩展策略、耗时和 Mach-O 数量。默认建议为：iPhone15
+批大小 8、`compatible`；iPhone11 批大小 4（发生内存压力或超大包时为 2）、`compatible`；
+iPhone8 批大小 2、`main_only`。`serious/critical` 温度、vnode 使用率达到 90% 或严格扩展能力
+不满足时不会派发。大于等于 800 MiB 的任务优先具备 resumable batch 能力的节点并提高 iPhone15
+评分。前端支持自动、仅主程序、兼容扩展和严格扩展四档，画像建议通过 `initialBatchSize` 和
+`extensionDecryptionPolicy` 传给设备 daemon，并写入可恢复 checkpoint。
+
 当前 iPhone 后端为平台提供以下兼容接口：
 
 - `GET /api/node/info`：设备、运行时、存储和能力发现。

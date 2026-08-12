@@ -113,15 +113,17 @@
               <div class="section-head">
                 <div>
                   <h2 class="section-title">高级选项</h2>
-                  <p class="section-desc">默认使用稳定模式，减少大包和应用扩展引起的失败概率。</p>
+                  <p class="section-desc">自动模式会根据 iPhone 代际、Provider 和历史表现选择策略。</p>
                 </div>
               </div>
-              <label class="option-row">
-                <input id="forceExtensionToggle" type="checkbox" />
-                <span>
-                  <strong>尝试解密应用扩展</strong>
-                  <small>默认关闭。开启后会尝试应用扩展，但失败不阻塞主程序结果。</small>
-                </span>
+              <label class="admin-field" for="extensionPolicySelect">
+                <span>扩展解密策略</span>
+                <select id="extensionPolicySelect" class="field-input field-select">
+                  <option value="auto">自动（推荐）</option>
+                  <option value="main_only">仅主程序（最稳定）</option>
+                  <option value="compatible">兼容扩展</option>
+                  <option value="strict">严格解密全部扩展</option>
+                </select>
               </label>
             </section>
 
@@ -240,6 +242,6 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
-    <script type="module" src="/app.js?v=20260812-live-progress"></script>
+    <script type="module" src="/app.js?v=20260812-device-profile"></script>
   </body>
 </html>

@@ -43,6 +43,10 @@ struct DecryptCheckpoint: Content, Equatable {
 enum AdaptiveBatchPolicy {
     static let initialBatchSize = 8
 
+    static func clampedInitialBatchSize(_ requested: Int) -> Int {
+        min(16, max(1, requested))
+    }
+
     static func nextBatchSize(afterMemoryPressure current: Int) -> Int? {
         guard current > 1 else { return nil }
         return max(1, current / 2)

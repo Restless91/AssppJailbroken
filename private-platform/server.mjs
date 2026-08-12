@@ -22,6 +22,7 @@ import { JobJournal } from './job-journal.mjs';
 import { createBackupManager } from './backup-manager.mjs';
 import { admitJob, canDispatchJob, fairQueueOrder } from './scheduler-engine.mjs';
 import { createStorageLifecycle } from './storage-lifecycle.mjs';
+import { buildDeviceCapabilityProfile } from './device-capability-profile.mjs';
 import { verifyGatewaySignature, WechatGatewayClient } from './wechat-gateway.mjs';
 import {
   updateFromDeviceTask,
@@ -101,7 +102,11 @@ const adminSystem = createAdminSystem({
   getJobSummaries,
   getJobDetail,
   adminJobAction,
-  testStorage
+  testStorage,
+  decorateDevice: (device) => ({
+    ...device,
+    capabilityProfile: buildDeviceCapabilityProfile(device, state.jobs)
+  })
 });
 const jobJournal = new JobJournal(adminSystem.store.db);
 const backupManager = createBackupManager({
@@ -876,6 +881,9 @@ async function createJob(body, actor = { isAdmin: true }) {
     workflowStage: 'queued',
     stageProgress: 0,
     forceExtensionDecryption: body.forceExtensionDecryption === true,
+    extensionDecryptionPolicy: ['main_only', 'compatible', 'strict'].includes(body.extensionDecryptionPolicy)
+      ? body.extensionDecryptionPolicy
+      : null,
     externalVersionId: body.externalVersionId || null,
     requestedVersion: body.externalVersionId ? String(body.requestedVersion || '').trim() || null : null,
     storefront,
@@ -1091,6 +1099,9 @@ function selectCandidateDevice(job, devices, activeDevices) {
     }
     const priority = devicePriority(a) - devicePriority(b);
     if (priority !== 0) return priority;
+    const profileScore = buildDeviceCapabilityProfile(b, state.jobs, job).score
+      - buildDeviceCapabilityProfile(a, state.jobs, job).score;
+    if (profileScore !== 0) return profileScore;
     if (Number(b.weight || 0) !== Number(a.weight || 0)) return Number(b.weight || 0) - Number(a.weight || 0);
     return String(a.id).localeCompare(String(b.id));
   });
@@ -1099,7 +1110,8 @@ function selectCandidateDevice(job, devices, activeDevices) {
 
 function deviceCanRunJob(device, job) {
   const effective = adminSystem.effectiveDeviceConfig(device);
-  return evaluateDeviceScheduling(device, job, effective).eligible === true;
+  return evaluateDeviceScheduling(device, job, effective).eligible === true
+    && buildDeviceCapabilityProfile(device, state.jobs, job).eligible;
 }
 
 function updateCompatibilityWait(job, devices, activeDevices) {
@@ -1108,12 +1120,19 @@ function updateCompatibilityWait(job, devices, activeDevices) {
   ).trim();
   const candidates = devices
     .filter((device) => !activeDevices.has(device.id))
-    .map((device) => ({
-      id: device.id,
-      name: device.name,
-      iosVersion: device.iosVersion || '',
-      ...evaluateDeviceScheduling(device, job, adminSystem.effectiveDeviceConfig(device))
-    }));
+    .map((device) => {
+      const scheduling = evaluateDeviceScheduling(device, job, adminSystem.effectiveDeviceConfig(device));
+      const profile = buildDeviceCapabilityProfile(device, state.jobs, job);
+      return {
+        id: device.id,
+        name: device.name,
+        iosVersion: device.iosVersion || '',
+        ...scheduling,
+        eligible: scheduling.eligible && profile.eligible,
+        code: scheduling.eligible && !profile.eligible ? profile.reason : scheduling.code,
+        profile
+      };
+    });
   const compatible = candidates.filter((device) => device.eligible);
   const next = {
     status: compatible.length ? 'waiting_for_device' : 'waiting_for_compatible_device',
@@ -1162,6 +1181,17 @@ function assignJobAttempt(job, device) {
   job.deviceId = device.id;
   job.assignedAt = now;
   job.attempts = Array.isArray(job.attempts) ? job.attempts : [];
+  const effective = adminSystem.effectiveDeviceConfig(device);
+  const configuredPolicy = ['main_only', 'compatible', 'strict'].includes(effective.extensionDecryptionPolicy)
+    ? effective.extensionDecryptionPolicy
+    : null;
+  const profile = buildDeviceCapabilityProfile(device, state.jobs, {
+    ...job,
+    extensionDecryptionPolicy: job.extensionDecryptionPolicy || configuredPolicy
+  });
+  job.deviceProfile = profile;
+  job.extensionDecryptionPolicy = job.extensionDecryptionPolicy || profile.extensionPolicy;
+  job.suggestedBatchSize = profile.batchSize;
   job.attempts.push({
     id: randomId(8),
     number: job.attempts.length + 1,
@@ -1171,7 +1201,9 @@ function assignJobAttempt(job, device) {
     startedAt: now,
     completedAt: null,
     errorCode: null,
-    error: null
+    error: null,
+    batchSize: profile.batchSize,
+    extensionPolicy: job.extensionDecryptionPolicy
   });
   job.logs = Array.isArray(job.logs) ? job.logs : [];
   const compatibility = evaluateDeviceCompatibility(device, job);
@@ -1185,6 +1217,7 @@ function assignJobAttempt(job, device) {
     job.logs.push(`兼容性检查通过：应用最低 iOS ${compatibility.minimumOsVersion}，设备为 iOS ${compatibility.deviceIosVersion}。`);
   }
   job.logs.push(`调度器选择设备：${device.name}（${device.priorityClass}，权重 ${device.weight}）。`);
+  job.logs.push(`设备画像：${profile.generation} / ${profile.provider}，批大小 ${profile.batchSize}，扩展策略 ${job.extensionDecryptionPolicy}，评分 ${profile.score}。`);
   touch(job);
 }
 
@@ -1196,6 +1229,9 @@ function finishCurrentAttempt(job, status, classified = null) {
   current.completedAt = new Date().toISOString();
   current.errorCode = classified?.code || null;
   current.error = classified?.message || null;
+  current.durationSeconds = Math.max(0, Math.round((Date.parse(current.completedAt) - Date.parse(current.startedAt)) / 1000));
+  current.completedMachOCount = Number(job.decryptCheckpoint?.completedMachOCount || job.verification?.verifiedMachOCount || 0);
+  current.totalMachOCount = Number(job.decryptCheckpoint?.totalMachOCount || job.verification?.totalMachOCount || 0);
 }
 
 function attemptsForDevice(job, deviceId) {
@@ -1360,6 +1396,8 @@ async function runJob(jobId) {
     const forceExtensionDecryption = job.forceExtensionDecryption === undefined
       ? !Boolean(effectiveDeviceConfig.skipExtensions)
       : Boolean(job.forceExtensionDecryption);
+    const extensionDecryptionPolicy = job.extensionDecryptionPolicy
+      || (forceExtensionDecryption ? 'strict' : 'compatible');
     job.status = 'running';
     updateWorkflowProgress(job, 'preparing', 0);
     job.speed = '';
@@ -1385,7 +1423,8 @@ async function runJob(jobId) {
     const rawMaterials = await unfairdPost(device, '/api/downloads/apple/default/materials', {
       software,
       externalVersionId: job.externalVersionId,
-      forceExtensionDecryption
+      forceExtensionDecryption,
+      extensionDecryptionPolicy
     });
     const materials = normalizeAppleDownloadMaterials(rawMaterials, software);
     job.accountHash = materials.accountHash || job.accountHash || null;
@@ -1431,7 +1470,9 @@ async function runJob(jobId) {
       sourceURL,
       sinfs: materials.sinfs || [],
       iTunesMetadata: materials.iTunesMetadata || null,
-      forceExtensionDecryption
+      forceExtensionDecryption,
+      extensionDecryptionPolicy,
+      initialBatchSize: job.suggestedBatchSize || null
     });
     const createdTask = created?.task || created;
     if (!createdTask?.id) {
@@ -3326,8 +3367,17 @@ function classifyJobError(message, sourceCode = '') {
       retryScope: lower === 'fetch failed' ? 'same-device' : 'next-device'
     };
   }
+  if (code === 'memory_pressure' || lower.includes('code 137') || lower.includes('exit 137') || lower.includes('jetsam')) {
+    return {
+      status: 'failed',
+      code: 'memory_pressure',
+      logPrefix: '内存压力',
+      message: text,
+      retryable: true,
+      retryScope: 'next-device'
+    };
+  }
   if (
-    lower.includes('code 137') ||
     lower.includes('task_for_pid') ||
     lower.includes('permission setup failed') ||
     lower.includes('jbclient apis are unavailable') ||

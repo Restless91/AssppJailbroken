@@ -14,7 +14,8 @@ export function createAdminSystem({
   getJobSummaries = null,
   getJobDetail = null,
   adminJobAction = null,
-  testStorage = null
+  testStorage = null,
+  decorateDevice = (device) => device
 }) {
   const databasePath = process.env.PLATFORM_DATABASE || join(rootDir, 'data', 'platform.sqlite');
   const store = new AdminDatabase({ path: databasePath, legacyConfig: config });
@@ -625,6 +626,7 @@ export function createAdminSystem({
       storageOverheadBytes: 512 * 1024 * 1024,
       storageBudgetVersion: 2,
       skipExtensions: false,
+      extensionDecryptionPolicy: 'auto',
       ...stored,
       ...storageBudget
     };
@@ -640,8 +642,8 @@ export function createAdminSystem({
     startMonitor,
     store,
     currentAdmin,
-    schedulingDevices: () => store.schedulingDevices(),
-    publicDevices: () => store.listDevices(),
+    schedulingDevices: () => store.schedulingDevices().map(decorateDevice),
+    publicDevices: () => store.listDevices().map(decorateDevice),
     schedulerSettings,
     effectiveDeviceConfig,
     notifyOperations: sendWecomAlert
