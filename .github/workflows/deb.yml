@@ -156,8 +156,9 @@ jobs:
           test "$(dpkg-deb -f "$output" Architecture)" = "${{ matrix.architecture }}"
           dpkg-deb -f "$output" Name Description
           if [[ "${{ matrix.profile }}" == taurine ]]; then
-            dpkg-deb --contents "$output" | grep -q 'UnfairRuntimeRunner'
-            dpkg-deb --contents "$output" | grep -q 'UnfairRuntimeDumper.dylib'
+            dpkg-deb --contents "$output" > release/deb-contents.txt
+            grep -q 'UnfairRuntimeRunner' release/deb-contents.txt
+            grep -q 'UnfairRuntimeDumper.dylib' release/deb-contents.txt
           fi
           shasum -a 256 "$output" > "${output}.sha256"
           echo "path=$output" >> "$GITHUB_OUTPUT"
