@@ -1,0 +1,83 @@
+name: Build release artifacts
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-platform:
+    name: iStoreOS platform bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Test platform
+        working-directory: private-platform
+        run: |
+          npm run check
+          npm test
+
+      - name: Package platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          tar \
+            --exclude='private-platform/data' \
+            --exclude='private-platform/node_modules' \
+            --exclude='private-platform/config.json' \
+            --exclude='private-platform/config.local.json' \
+            -czf release/asspp-istoreos-platform.tar.gz \
+            private-platform deploy/istoreos
+          sha256sum release/asspp-istoreos-platform.tar.gz > release/SHA256SUMS-platform
+
+      - name: Upload platform artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: asspp-istoreos-platform-${{ github.sha }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-platform-release:
+    name: Publish platform to GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build-platform
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: asspp-istoreos-platform-${{ github.sha }}
+          path: release
+
+      - name: Create release and upload artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --generate-notes \
+              --title "$GITHUB_REF_NAME"
+          fi
+          gh release upload "$GITHUB_REF_NAME" release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber

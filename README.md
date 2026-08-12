@@ -186,6 +186,29 @@ OpenSSH 用于部署和诊断；AppSync/appinst 用于安装下载得到的加�
 
 需要 Xcode、Theos、Swift 工具链及前端构建依赖。
 
+### GitHub Actions 自动构建
+
+仓库包含两条自动化工作流：
+
+- `CI`：每次 push 和 Pull Request 自动运行前端测试/构建、综合平台语法检查和测试。
+- `Build release artifacts`：推送 `vX.Y.Z` 标签时，在 GitHub 的 `macos-26` Runner 自动构建
+  Dopamine/rootless deb，并在 Linux Runner 生成 iStoreOS 综合平台压缩包和 SHA-256 清单。
+
+发布版本前，先把 `backend-swift/control` 的 `Version` 更新为目标版本并提交，然后创建同版本标签：
+
+```bash
+git tag v0.1.15
+git push origin v0.1.15
+```
+
+工作流会把构建结果上传到 Actions Artifacts；标签对应的 GitHub Release 已存在时，还会自动把 deb、
+iStoreOS 压缩包和校验清单附加到该 Release。也可在 GitHub Actions 页面手动运行，并指定
+手动运行综合平台发布包构建。
+
+rootless 自动构建不需要连接 iPhone，也不包含设备密码。Taurine/Procursus 包依赖专用的
+`UnfairRuntimeRunner` 和 `UnfairRuntimeDumper.dylib`，在这两个发布资产进入受保护构建源之前，
+仍应使用本机受控构建流程，避免发布缺少运行时的无效 deb。
+
 ```bash
 git clone https://github.com/lbr77/AssppJailbroken.git
 cd AssppJailbroken

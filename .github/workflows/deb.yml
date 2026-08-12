@@ -30,7 +30,7 @@ jobs:
     name: Build rootless iOS deb
     runs-on: macos-26
     permissions:
-      contents: read
+      contents: write
 
     steps:
       - name: Checkout AssppWeb
@@ -44,6 +44,19 @@ jobs:
           repository: ${{ env.UNFAIR_REPOSITORY }}
           ref: ${{ env.UNFAIR_REF }}
           path: unfair
+
+      - name: Validate release version
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: AssppWeb
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_version="${GITHUB_REF_NAME#v}"
+          package_version="$(awk '/^Version:/ { print $2; exit }' backend-swift/control)"
+          test "$tag_version" = "$package_version" || {
+            echo "Tag v${tag_version} does not match backend-swift/control ${package_version}" >&2
+            exit 1
+          }
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -115,11 +128,35 @@ jobs:
           echo "name=$(basename "$deb" .deb)" >> "$GITHUB_OUTPUT"
           dpkg-deb --info "$deb"
           dpkg-deb --contents "$deb" | sed -n '1,160p'
+          shasum -a 256 "$deb" > "${deb}.sha256"
 
       - name: Upload deb artifact
         uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.deb.outputs.name }}
-          path: ${{ steps.deb.outputs.path }}
+          path: |
+            ${{ steps.deb.outputs.path }}
+            ${{ steps.deb.outputs.path }}.sha256
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30
+
+      - name: Publish deb to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: AssppWeb
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --generate-notes \
+              --title "$GITHUB_REF_NAME"
+          fi
+          gh release upload "$GITHUB_REF_NAME" \
+            "${{ steps.deb.outputs.path }}" \
+            "${{ steps.deb.outputs.path }}.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
