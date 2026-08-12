@@ -129,6 +129,7 @@ jobs:
         run: |
           set -euo pipefail
           version="$(awk '/^Version:/ { print $2; exit }' "backend-swift/packaging/control.${{ matrix.variant }}")"
+          mkdir -p backend-swift/debs
           find backend-swift/debs -maxdepth 1 -type f -name "wiki.qaq.unfaird_${version}_*" -delete
           make -C backend-swift package \
             FINALPACKAGE=1 \
