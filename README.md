@@ -18,9 +18,9 @@ AssppJailbroken 是面向个人越狱 iPhone 的 AssppWeb 后端。它从 Apple 
 
 普通 arm64 daemon 可以在 arm64e 设备上兼容运行，但注入 arm64e 进程的 dylib/helper 必须包含 arm64e slice。Taurine 包内的 `fouldecrypt.kernrw` 和 `libkernrw.0.dylib` 必须同时包含 `arm64`、`arm64e`；daemon 与注入目标的架构不能混为一谈。
 
-当前 Taurine 发布版本为 `0.1.7`。该版本已把 iStoreOS 的
-`forceExtensionDecryption` 贯通到独立 runner 的 `--force-extensions` 参数，可对主程序、Framework、
-`.appex` 和 Watch 组件执行严格完整解密。
+当前正式发布版本为 `0.1.15`。iPhone8、iPhone11、iPhone15 使用统一的 Debian Package
+`wiki.qaq.unfaird` 和统一版本号，并通过设备 Profile 区分 rootless/rootful 布局、运行时 Adapter、
+默认扩展策略和批次大小。iPhone11/Taurine 包已包含通过固定哈希校验的 runner/dumper。
 
 rootless 发布版本 `0.1.8` 新增持久化解密 Checkpoint、`main_only` / `compatible` / `strict`
 三档扩展策略，以及可恢复 runner 的 `8 → 4 → 2 → 1` Jetsam 自动缩批 Interface。只有 runner
@@ -50,6 +50,11 @@ PBKDF2/AES-256-GCM 改用兼容实现并保持原备份格式，同时完善移�
 版本 `0.1.14` 将磁盘空间门禁提前到 IPA 下载之前，并让预留覆盖下载、SINF 注入和砸壳全过程。
 断点续传会抵扣已有 `.part` 文件，下载完成后按实际 IPA 大小重算剩余工作空间；空间不足时任务在写入
 大文件前以 `insufficient_storage` 明确失败，避免下载耗尽磁盘后才在砸壳阶段中断。
+
+版本 `0.1.15` 统一 iPhone8、iPhone11、iPhone15 的包版本，提供三个设备专用 Deb。iPhone8 和
+iPhone15 使用 Dopamine rootless 布局，分别采用 main-only/batch 2 与 compatible/batch 8；iPhone11
+使用 Taurine/Procursus rootful 布局、compatible/batch 4，并内置已验证的 kernrw runner/dumper。
+GitHub Actions 会并行构建、检查包架构与关键运行时、生成 SHA-256，并自动附加到同一 Release。
 
 ## 本次修复和适配
 
@@ -265,7 +270,10 @@ wiki.qaq.unfaird_0.1.15_iphone15_iphoneos-arm64.deb
 
 | Profile | 版本 | 文件 | SHA-256 |
 | --- | --- | --- | --- |
-| Dopamine/rootless | 0.1.14 | `wiki.qaq.unfaird_0.1.14_iphoneos-arm64.deb` | `fa523f0b8a0be1a5a91f063ebf6a2c3276714686c29a21de53060c50d27e5614` |
+| iPhone8 / Dopamine rootless | 0.1.15 | `wiki.qaq.unfaird_0.1.15_iphone8_iphoneos-arm64.deb` | `a27f5cf5ab1b3a576b1b45f0c34da7201f2d312b7b867bcec75b7cc24b47d235` |
+| iPhone11 / Taurine Procursus | 0.1.15 | `wiki.qaq.unfaird_0.1.15_iphone11_iphoneos-arm.deb` | `b2a0eb49ffa5f2f4467a3b65706f579f2cafca66eb2d517c5e3b6ad8719c0c34` |
+| iPhone15 / Dopamine 2 rootless | 0.1.15 | `wiki.qaq.unfaird_0.1.15_iphone15_iphoneos-arm64.deb` | `bfd6f7696dcfd4d4936f21a49ba47e5477e8fab3c540bed227ebb715a810f9e6` |
+| 历史通用 rootless | 0.1.14 | `wiki.qaq.unfaird_0.1.14_iphoneos-arm64.deb` | `fa523f0b8a0be1a5a91f063ebf6a2c3276714686c29a21de53060c50d27e5614` |
 | Dopamine/rootless | 0.1.13 | `wiki.qaq.unfaird_0.1.13_iphoneos-arm64.deb` | `8db93e140380e4cfec468d4a1a2bab6a4cee96fee2332afd4343f51b33112715` |
 | Dopamine/rootless | 0.1.12 | `wiki.qaq.unfaird_0.1.12_iphoneos-arm64.deb` | `3670c45f8bb90797fa18a63244b0d0d1f8e4bf07b42430d74095259aaaea4d2b` |
 | Dopamine/rootless | 0.1.11 | `wiki.qaq.unfaird_0.1.11_iphoneos-arm64.deb` | `2b413cc9973e87d7fcbb4610e5cd161e6d9d2202338917dce38a10b230f7d78b` |
@@ -330,7 +338,7 @@ npm run check
 管理平台使用持久化设备租约保证每台设备只运行一个任务，其余任务按用户公平轮转并保持各用户
 内部 FIFO；默认每名用户最多运行 1 个、排队 3 个任务，避免单一用户占满 iPhone8、iPhone11、
 iPhone15。平台重启后会从 SQLite JobJournal 恢复设备任务和租约。空间调度与
-unfaird `0.1.14` 保持一致：`max(2 GiB, IPA × 3 + 512 MiB)`；设备的 `pending`、`queuePosition`、
+unfaird `0.1.15` 保持一致：`max(2 GiB, IPA × 3 + 512 MiB)`；设备的 `pending`、`queuePosition`、
 `canRetry` 和 `insufficient_storage` 会同步到综合后台。设备卡会显示 daemon 构建、运行环境、
 可用空间和砸壳能力，方便确认 iPhone8、iPhone11、iPhone15 的实际适配状态。
 
@@ -437,7 +445,7 @@ Bundle 冲突和产物校验失败。
 
 - 在 iPhone runtime runner 内实现 `--checkpoint` / `--batch-size` Adapter；daemon 侧 Interface 和
   `8 → 4 → 2 → 1` 调度已完成，未声明能力的旧 runner 会保持原调用方式。
-- 把 Taurine runtime runner/dumper 源码和构建入口完全收拢到单一可复现发布流水线。
+- 将目前经过固定哈希审计的 Taurine runner/dumper 二进制进一步替换为同仓库源码可复现构建。
 - 增加真实设备升级测试矩阵和 deb 内 `arm64`/`arm64e` 构建期自动审计。
 - 让解密期断点恢复复用已下载 IPA，而不是重新执行完整下载。
 

@@ -25,7 +25,14 @@ Complete rootless iOS deb from the AssppWeb repository root:
   make build
 
 Install on device:
-  apt install ./wiki.qaq.unfaird_<version>_iphoneos-arm64.deb
+  # iPhone 8 / Dopamine rootless
+  apt install ./wiki.qaq.unfaird_<version>_iphone8_iphoneos-arm64.deb
+
+  # iPhone 11 / Taurine + Procursus
+  apt install ./wiki.qaq.unfaird_<version>_iphone11_iphoneos-arm.deb
+
+  # iPhone 15 / Dopamine 2 rootless
+  apt install ./wiki.qaq.unfaird_<version>_iphone15_iphoneos-arm64.deb
 
 iOS deployment guide:
   docs/deploy-ios.md
