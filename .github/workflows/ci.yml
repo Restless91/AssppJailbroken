@@ -40,3 +40,5 @@ jobs:
           npm run check
           npm test
 
+      - name: Verify private platform container
+        run: docker build --tag asspp-platform:ci private-platform
