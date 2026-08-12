@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, readFile, rename, writeFile, stat, statfs, unlink } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, stat, statfs, unlink } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { request as httpsRequest } from 'node:https';
@@ -39,6 +39,7 @@ import { extractErrorMessage, readErrorMessage } from './error-message.mjs';
 import { createOnlineDevicePool } from './device-pool.mjs';
 import { createHealthModel, createMetricsRegistry } from './observability.mjs';
 import { constantTimeEqual, createRateLimiter, readBoundedBody, requireHeaderToken, validateCredentialConfig, validateMutationOrigin } from './request-security.mjs';
+import { writeAtomicJson } from './atomic-json-store.mjs';
 
 const rootDir = new URL('.', import.meta.url).pathname;
 const configPath = process.env.PLATFORM_CONFIG || join(rootDir, 'config.json');
@@ -3129,11 +3130,8 @@ async function loadState() {
 }
 
 async function saveState() {
-  await mkdir(dirname(statePath), { recursive: true });
   jobJournal.saveSnapshot(state.jobs);
-  const temporaryPath = `${statePath}.tmp`;
-  await writeFile(temporaryPath, JSON.stringify(state, null, 2), { mode: 0o600 });
-  await rename(temporaryPath, statePath);
+  await writeAtomicJson(statePath, state);
 }
 
 async function loadJson(path, fallbackPath) {
