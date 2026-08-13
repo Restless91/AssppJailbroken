@@ -39,10 +39,16 @@ func routes(
     }
 
     app.get("api", "v1", "decrypt", ":id", "ready") { req -> DecryptReadyResponse in
-        try decryptService.readyResponse(for: jobID(from: req))
+        if let config {
+            _ = try requireAccess(req, config: config, settingsStore: settingsStore)
+        }
+        return try decryptService.readyResponse(for: jobID(from: req))
     }
 
     app.get("api", "v1", "decrypt", ":id", "output") { req -> Response in
+        if let config {
+            _ = try requireAccess(req, config: config, settingsStore: settingsStore)
+        }
         let output = try decryptService.validatedReadyOutputURL(for: jobID(from: req))
 
         return req.fileio.streamFile(at: output.path)
