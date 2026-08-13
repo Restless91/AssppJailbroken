@@ -19,6 +19,23 @@ libjailbreak paths:
   /var/jb/usr/lib/libjailbreak.dylib
   /var/jb/basebin/libjailbreak.dylib
   /basebin/libjailbreak.dylib
+  /usr/lib/libjailbreak.dylib
+
+Taurine/Procursus note:
+  iOS 14 Taurine devices usually provide libkernrw/libiosexec/libdimentio
+  instead of libjailbreak.dylib. The package postinst allows this runtime and
+  the daemon reports a targeted Taurine compatibility error instead of a generic
+  dlopen failure. Native full-auto decryption still needs a libjailbreak-style
+  jbclient bridge/provider; for debugging only, set
+  UNFAIR_ALLOW_UNTRUSTED_TAURINE_FALLBACK=true to skip trust/prepare and try the
+  remaining fcntl/task-memory path.
+
+  Inspired by Lakr233/Iridium, the daemon can also use an external fouldecrypt
+  provider. Put a libkernrw build at:
+    /usr/local/lib/unfaird/fouldecrypt.kernrw
+  or set:
+    UNFAIR_FOULDECRYPT_PATH=/path/to/fouldecrypt.kernrw
+  When present, this provider is tried before the native mremap path.
 
 Complete rootless iOS deb from the AssppWeb repository root:
   cd ..

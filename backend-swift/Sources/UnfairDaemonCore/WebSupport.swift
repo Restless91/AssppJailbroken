@@ -46,12 +46,38 @@ func dataResponse(_ data: Data, contentType: String, status: HTTPResponseStatus 
     )
 }
 
-func requireAccess(_ req: Request, config: WebConfig) throws {
+func requireAccess(_ req: Request, config: WebConfig, settingsStore: RuntimeSettingsStore? = nil) throws -> AccessActor {
     let headerToken = req.headers.first(name: "X-Access-Token")
     let queryToken = req.query[String.self, at: "accessToken"]
+    if let settingsStore = settingsStore {
+        if let actor = settingsStore.authenticate(token: headerToken) ?? settingsStore.authenticate(token: queryToken) {
+            return actor
+        }
+        throw Abort(.unauthorized, reason: "Unauthorized")
+    }
+
     guard config.verifyAccessToken(headerToken) || config.verifyAccessToken(queryToken) else {
         throw Abort(.unauthorized, reason: "Unauthorized")
     }
+    return config.accessPasswordHash.isEmpty ? .open : .admin
+}
+
+func requireAdminAccess(_ req: Request, config: WebConfig, settingsStore: RuntimeSettingsStore) throws {
+    if config.accessPasswordHash.isEmpty {
+        return
+    }
+    let actor = try requireAccess(req, config: config, settingsStore: settingsStore)
+    if case .admin = actor {
+        return
+    }
+    throw Abort(.forbidden, reason: "Admin token required")
+}
+
+func requireConfiguredAdminAccess(_ req: Request, config: WebConfig, settingsStore: RuntimeSettingsStore) throws {
+    guard config.accessPasswordHash.isEmpty == false else {
+        throw Abort(.serviceUnavailable, reason: "ACCESS_PASSWORD must be configured before exporting account state")
+    }
+    try requireAdminAccess(req, config: config, settingsStore: settingsStore)
 }
 
 func requireAccountHash(_ req: Request) throws -> String {
@@ -85,8 +111,15 @@ func currentTimestampString() -> String {
 }
 
 func fileExists(_ path: String) -> Bool {
+    // Use FileManager instead of Darwin.access() — RootHide filesystem virtualization
+    // blocks access() and stat() syscalls, but NSFileManager uses XPC to talk to
+    // launchd which can resolve paths through the jailbreak namespace correctly.
     var isDirectory: ObjCBool = false
-    return FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) && isDirectory.boolValue == false
+    let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+    guard exists else {
+        return false
+    }
+    return !isDirectory.boolValue
 }
 
 func isIPAddressHost(_ host: String) -> Bool {
@@ -130,11 +163,11 @@ func sanitizePathSegment(_ value: String, label: String) throws -> String {
 
 func sanitizeFilename(_ value: String) -> String {
     let cleaned = value.map { ch -> Character in
-        if ch == "\"" || ch == "\\" || ch == "\r" || ch == "\n" {
+        if ch == "\"" || ch == "\\" || ch == "/" || ch == ":" || ch == "\r" || ch == "\n" {
             return "_"
         }
         for scalar in String(ch).unicodeScalars {
-            if scalar.value < 0x20 || scalar.value > 0x7e {
+            if scalar.value < 0x20 {
                 return "_"
             }
         }
@@ -147,10 +180,17 @@ func sanitizeFilename(_ value: String) -> String {
     return String(value.prefix(200))
 }
 
-func attachmentContentDisposition(displayName: String, fallbackName: String) -> String {
-    let fallback = sanitizeFilename(fallbackName)
-    let attrCharacters = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!#$&+-.^_`|~")
-    let encoded = displayName.addingPercentEncoding(withAllowedCharacters: attrCharacters) ?? fallback
+func contentDispositionAttachment(filename: String) -> String {
+    let asciiFallback = sanitizeFilename(filename).map { ch -> Character in
+        for scalar in String(ch).unicodeScalars {
+            if scalar.value < 0x20 || scalar.value > 0x7e {
+                return "_"
+            }
+        }
+        return ch
+    }
+    let fallback = String(asciiFallback).isEmpty ? "package.ipa" : String(asciiFallback)
+    let encoded = filename.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? fallback
     return "attachment; filename=\"\(fallback)\"; filename*=UTF-8''\(encoded)"
 }
 
@@ -173,8 +213,9 @@ func escapeXML(_ value: String) -> String {
         .replacingOccurrences(of: ">", with: "&gt;")
 }
 
-func safeBaseURL(for req: Request, config: WebConfig) -> String {
-    let configured = config.publicBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+func safeBaseURL(for req: Request, config: WebConfig, settingsStore: RuntimeSettingsStore? = nil) -> String {
+    let base = settingsStore?.effectiveSettings().publicBaseURL ?? config.publicBaseURL
+    let configured = base.trimmingCharacters(in: .whitespacesAndNewlines)
         .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     if configured.isEmpty == false {
         return configured

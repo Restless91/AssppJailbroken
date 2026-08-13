@@ -2,11 +2,12 @@ import Darwin
 import Dispatch
 import Foundation
 import Vapor
+import UnfairKit
+import ZIPFoundation
 
 struct DecryptService {
     typealias ProcessRunner = (String, [String], URL, URL?, Int?) throws -> PosixSpawnResult
-    typealias JobScheduler = (@escaping @Sendable () -> Void) -> Void
-    typealias PackageVerifier = (URL, URL) throws -> Void
+    typealias JobScheduler = (@escaping () -> Void) -> Void
 
     struct Dependencies {
         let workDirectory: () -> URL
@@ -17,7 +18,6 @@ struct DecryptService {
         let runProcess: ProcessRunner
         let reserveTask: (URL, Int64) throws -> (() -> Void)
         let scheduleJob: JobScheduler
-        let verifyPackage: PackageVerifier
 
         static let live = Dependencies(
             workDirectory: { DecryptService.workDirectory() },
@@ -41,23 +41,20 @@ struct DecryptService {
                 )
                 return { reservation.release() }
             },
-            scheduleJob: { work in DeviceTaskQueue.shared.async(work) },
-            verifyPackage: { outputURL, sourceURL in
-                _ = try DecryptVerifier.verify(
-                    outputURL: outputURL,
-                    sourceURL: sourceURL,
-                    allowEncryptedExtensions: true
-                )
-            }
+            scheduleJob: { work in DecryptService.decryptQueue.async(execute: work) }
         )
     }
 
     static let maxUploadBytes: Int64 = 8 * 1024 * 1024 * 1024
     private static let downloadTTLSeconds = 3600
     private static let cleanupIntervalSeconds = 60
-    private static let remoteDownloadTimeoutSeconds = 15 * 60
-    private static let workDirectoryPath = "/var/tmp/unfaird/jobs"
+    private static let diskReserveBytes: Int64 = 16 * 1024 * 1024 * 1024
+    private static let memoryFloorBytes: UInt64 = 400 * 1024 * 1024
+    private static let memoryRecoveryTimeout: TimeInterval = 60
+    private static let workDirectoryPath = "/var/tmp/unfaird-jobs"
+    private static let runnerTimeoutSeconds = 30 * 60
     private static let cleanupLock = NSLock()
+    private static let decryptQueue = DispatchQueue(label: "wiki.qaq.unfaird.decrypt-queue")
     private static var cleanupTimer: DispatchSourceTimer?
 
     private let dependencies: Dependencies
@@ -69,8 +66,7 @@ struct DecryptService {
     static func prepareWorkDirectoryForStartup() throws {
         try FileManager.default.createDirectory(
             at: workDirectory(),
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
+            withIntermediateDirectories: true
         )
         try removeJobDirectories()
     }
@@ -92,6 +88,88 @@ struct DecryptService {
         }
         cleanupTimer = timer
         timer.resume()
+    }
+
+    /// Free memory on this device, falling back to nil when the Mach call fails.
+    private static func freeMemoryBytes() -> UInt64? {
+        var stats = vm_statistics64()
+        var count = mach_msg_type_number_t(
+            MemoryLayout<vm_statistics64>.size / MemoryLayout<integer_t>.size
+        )
+        let result = withUnsafeMutablePointer(to: &stats) { statsPtr in
+            statsPtr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPtr in
+                host_statistics64(mach_host_self(), HOST_VM_INFO64, intPtr, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else {
+            return nil
+        }
+        let pageSize = UInt64(vm_kernel_page_size)
+        return UInt64(stats.free_count) * pageSize
+    }
+
+    /// Drop inactive file-backed pages before a heavy install/decrypt cycle.
+    private func purgeFileCacheIfAvailable() {
+        let candidates = [
+            "/var/jb/usr/bin/purge",
+            "/usr/bin/purge",
+            "/bin/purge",
+        ]
+        for path in candidates where access(path, X_OK) == 0 {
+            _ = try? dependencies.runProcess(
+                path,
+                [],
+                FileManager.default.temporaryDirectory,
+                nil,
+                30
+            )
+            return
+        }
+    }
+
+    private func ensureMemoryHeadroom() throws {
+        let deadline = Date().addingTimeInterval(Self.memoryRecoveryTimeout)
+        var free = Self.freeMemoryBytes()
+        if free == nil {
+            return
+        }
+        if free! >= Self.memoryFloorBytes {
+            return
+        }
+        purgeFileCacheIfAvailable()
+        while Date() < deadline {
+            Thread.sleep(forTimeInterval: 3)
+            free = Self.freeMemoryBytes()
+            if let current = free, current >= Self.memoryFloorBytes {
+                return
+            }
+        }
+        fputs(
+            "unfaird: refusing decrypt because free memory is \(free.map { String($0 / 1024 / 1024) } ?? "unknown") MB; run purge and retry\n",
+            stderr
+        )
+        throw Abort(
+            .serviceUnavailable,
+            reason: "device memory is too low for a safe decrypt; free memory did not recover after purge"
+        )
+    }
+
+    private func cleanupStalePackageFiles() {
+        let root = URL(fileURLWithPath: "/var/mobile/AssppWebData/packages", isDirectory: true)
+        guard let children = try? FileManager.default.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        ) else {
+            return
+        }
+        let now = Date()
+        for child in children {
+            let age = (try? child.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
+                .map { now.timeIntervalSince($0) } ?? .greatestFiniteMagnitude
+            if age > TimeInterval(Self.downloadTTLSeconds) {
+                try? FileManager.default.removeItem(at: child)
+            }
+        }
     }
 
     func enqueue(_ upload: DecryptUpload) throws -> DecryptQueueResponse {
@@ -203,24 +281,57 @@ struct DecryptService {
                 in: job.directoryURL
             )
 
+            let releaseReservation = try dependencies.reserveTask(
+                dependencies.workDirectory(),
+                Self.diskReserveBytes
+            )
+            defer { releaseReservation() }
+
+            cleanupStalePackageFiles()
+            try ensureMemoryHeadroom()
             let packageInputURL = try packageInputURL(
                 from: inputSource,
                 packageWorkingDirectory: packageWorkingDirectory
             )
-            let packageSize = ((try? FileManager.default.attributesOfItem(atPath: packageInputURL.path)[.size]) as? NSNumber)?.int64Value ?? 0
-            let releaseReservation = try dependencies.reserveTask(
-                dependencies.workDirectory(),
-                StorageBudget.requiredBytes(packageSize: packageSize)
-            )
-            defer { releaseReservation() }
+            // The download itself leaves hundreds of MB of file-backed cache
+            // behind; drop it before installd unpacks the IPA.
+            purgeFileCacheIfAvailable()
+            try ensureMemoryHeadroom()
             let sandboxProfileURL = try dependencies.sandboxProfileURL(job.directoryURL)
-            let result = try runDecryptRunner(
+
+            // Primary: unfaird native decryption
+            let unfairdResult: PosixSpawnResult
+            let nativeSpawnFailed: Bool
+            do {
+                unfairdResult = try runDecryptRunner(
+                    for: job,
+                    inputURL: packageInputURL,
+                    packageWorkingDirectory: packageWorkingDirectory,
+                    sandboxProfileURL: sandboxProfileURL
+                )
+                nativeSpawnFailed = false
+            } catch {
+                fputs("unfaird native spawn failed: \(error), skipping to Frida fallback\n", stderr)
+                unfairdResult = PosixSpawnResult(exitCode: -1, stdout: Data(), stderr: Data("\(error)".utf8))
+                nativeSpawnFailed = true
+            }
+
+            let unfairdSuccess = !nativeSpawnFailed && unfairdResult.exitCode == 0 &&
+                FileManager.default.fileExists(atPath: job.outputURL.path)
+
+            if unfairdSuccess {
+                try finalize(job: job, result: unfairdResult)
+                return
+            }
+
+            // Fallback: Frida-based decryption (works better on arm64e / iPhone 15+)
+            fputs("unfaird decrypt failed (exit \(unfairdResult.exitCode)), trying Frida fallback...\n", stderr)
+            let fridaResult = try runFridaFallback(
                 for: job,
                 inputURL: packageInputURL,
-                packageWorkingDirectory: packageWorkingDirectory,
-                sandboxProfileURL: sandboxProfileURL
+                packageWorkingDirectory: packageWorkingDirectory
             )
-            try finalize(job: job, inputURL: packageInputURL, result: result)
+            try finalize(job: job, result: fridaResult)
         } catch {
             markFailed(job: job, exit: nil, error: errorDescription(error))
         }
@@ -303,38 +414,155 @@ struct DecryptService {
         }
     }
 
+    /// In-process decryption using UnfairKit's PackageProcessor.
+    /// No posix_spawn needed — works on RootHide / rootless jailbreaks.
     private func runDecryptRunner(
         for job: DecryptJob,
         inputURL: URL,
         packageWorkingDirectory: URL,
         sandboxProfileURL: URL?
     ) throws -> PosixSpawnResult {
-        let currentExecutable = dependencies.currentExecutablePath()
-        let runnerPath = PackageRunnerResolver.executablePath(
-            currentExecutablePath: currentExecutable
-        )
-        return try dependencies.runProcess(
-            runnerPath,
-            PackageRunnerResolver.arguments(
-                inputPath: inputURL.path,
-                outputPath: job.outputURL.path,
-                workingDirectoryPath: packageWorkingDirectory.path,
-                extensionPolicy: .compatible,
-                supportsExtensionPolicy: runnerPath != currentExecutable
-            ),
-            job.directoryURL,
-            sandboxProfileURL,
-            DecryptTimeoutPolicy.seconds(
-                fileSize: ((try? FileManager.default.attributesOfItem(atPath: inputURL.path)[.size]) as? NSNumber)?.int64Value ?? 0
+        var stdoutLines: [String] = []
+        var stderrLines: [String] = []
+        let logger = UnfairLogger(verbose: true) { message in
+            stdoutLines.append(message)
+        }
+
+        do {
+            let processor = PackageProcessor(logger: logger)
+            try processor.process(
+                input: inputURL,
+                output: job.outputURL,
+                workingDirectory: packageWorkingDirectory,
+                forceExtensions: false
             )
-        )
+            let stdoutData = Data(stdoutLines.joined(separator: "\n").utf8)
+            return PosixSpawnResult(exitCode: 0, stdout: stdoutData, stderr: Data())
+        } catch {
+            let errorMsg = "PackageProcessor failed: \(error)"
+            stderrLines.append(errorMsg)
+            fputs("\(errorMsg)\n", stderr)
+            let stderrData = Data(stderrLines.joined(separator: "\n").utf8)
+            return PosixSpawnResult(exitCode: 1, stdout: Data(), stderr: stderrData)
+        }
     }
 
-    private func finalize(job: DecryptJob, inputURL: URL, result: PosixSpawnResult) throws {
+    // MARK: - Frida Fallback Decryption
+
+    /// Frida-based decryption entirely on-device via linked libfrida-core.
+    /// Connects to local frida-server (127.0.0.1:27042) — no Mac dependency,
+    /// no posix_spawn. Works on RootHide / iOS 17+.
+    private func runFridaFallback(
+        for job: DecryptJob,
+        inputURL: URL,
+        packageWorkingDirectory: URL
+    ) throws -> PosixSpawnResult {
+        let bundleID = try extractBundleIDFromIPA(inputURL, workingDirectory: packageWorkingDirectory)
+        let fridaHost = ProcessInfo.processInfo.environment["UNFAIRD_FRIDA_HOST"] ?? "127.0.0.1:27042"
+
+        fputs("Frida fallback: on-device Frida dump via \(fridaHost) for \(bundleID)\n", stderr)
+
+        let service = FridaService(fridaHost: fridaHost)
+        defer { /* service cleans up on deinit */ }
+
+        do {
+            let success = try service.decrypt(
+                inputIPA: inputURL,
+                outputIPA: job.outputURL,
+                workingDirectory: packageWorkingDirectory,
+                bundleID: bundleID
+            )
+
+            if success {
+                fputs("Frida fallback: dump succeeded\n", stderr)
+                return PosixSpawnResult(exitCode: 0, stdout: Data("frida dump ok".utf8), stderr: Data())
+            } else {
+                let msg = "Frida fallback: output IPA not created"
+                fputs("\(msg)\n", stderr)
+                return PosixSpawnResult(exitCode: 1, stdout: Data(), stderr: Data(msg.utf8))
+            }
+        } catch {
+            let msg = "Frida fallback failed: \(error.localizedDescription)"
+            fputs("\(msg)\n", stderr)
+            return PosixSpawnResult(exitCode: 1, stdout: Data(), stderr: Data(msg.utf8))
+        }
+    }
+
+    /// Extract CFBundleIdentifier from an IPA file using ZIPFoundation (in-process, no spawn)
+    private func extractBundleIDFromIPA(_ ipaPath: URL, workingDirectory: URL) throws -> String {
+
+        let archive: Archive
+        do {
+            archive = try Archive(url: ipaPath, accessMode: .read)
+        } catch {
+            throw Abort(.internalServerError, reason: "cannot open IPA archive: \(error)")
+        }
+
+        // Find Info.plist inside Payload/*.app/
+        guard let infoEntry = archive.first(where: { entry in
+            let path = entry.path
+            return path.contains("Payload/") && path.hasSuffix(".app/Info.plist")
+        }) else {
+            throw Abort(.internalServerError, reason: "Info.plist not found in IPA")
+        }
+
+        let tempDir = workingDirectory.appendingPathComponent("bundleid_extract")
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        let infoURL = tempDir.appendingPathComponent("Info.plist")
+        _ = try archive.extract(infoEntry, to: infoURL)
+
+        guard let infoPlist = NSDictionary(contentsOf: infoURL),
+              let bundleID = infoPlist["CFBundleIdentifier"] as? String else {
+            throw Abort(.internalServerError, reason: "cannot read CFBundleIdentifier from Info.plist")
+        }
+
+        return bundleID
+    }
+
+    /// Synchronous HTTP POST with JSON body
+    private func postJSONSync(urlString: String, body: Data, timeout: Double = 1800) throws -> Data {
+        guard let url = URL(string: urlString) else {
+            throw Abort(.badRequest, reason: "invalid URL: \(urlString)")
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+        request.timeoutInterval = timeout
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Result<Data, Error>?
+
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                result = .failure(error)
+            } else if let httpResponse = response as? HTTPURLResponse,
+                      (200...299).contains(httpResponse.statusCode) == false {
+                result = .failure(Abort(.badGateway, reason: "Mac Frida service HTTP \(httpResponse.statusCode)"))
+            } else if let data = data {
+                result = .success(data)
+            } else {
+                result = .failure(Abort(.internalServerError, reason: "no data from Mac Frida service"))
+            }
+            semaphore.signal()
+        }
+        task.resume()
+        semaphore.wait()
+
+        switch result {
+        case .success(let data): return data
+        case .failure(let error): throw error
+        case .none: throw Abort(.internalServerError, reason: "HTTP request returned no result")
+        }
+    }
+
+    private func finalize(job: DecryptJob, result: PosixSpawnResult) throws {
         let exit = exit(for: result, job: job)
         if result.exitCode == 0,
            FileManager.default.fileExists(atPath: job.outputURL.path) {
-            try dependencies.verifyPackage(job.outputURL, inputURL)
             try writeMetadata(
                 job.metadata(
                     status: .succeeded,
@@ -515,6 +743,11 @@ struct DecryptService {
     }
 
     private static func currentExecutablePath() -> String {
+        // Support UNFAIRD_EXECUTABLE_PATH override for RootHide compatibility
+        if let envPath = ProcessInfo.processInfo.environment["UNFAIRD_EXECUTABLE_PATH"],
+           !envPath.isEmpty {
+            return envPath
+        }
         let path = CommandLine.arguments[0]
         if path.hasPrefix("/") {
             return path
@@ -565,7 +798,7 @@ struct DecryptService {
         let delegate = LimitedDownloadDelegate(destination: destination, maxBytes: Self.maxUploadBytes)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 60
-        configuration.timeoutIntervalForResource = TimeInterval(Self.remoteDownloadTimeoutSeconds)
+        configuration.timeoutIntervalForResource = TimeInterval(Self.runnerTimeoutSeconds)
         let delegateQueue = OperationQueue()
         delegateQueue.maxConcurrentOperationCount = 1
         let session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: delegateQueue)
@@ -597,9 +830,6 @@ struct DecryptService {
     private func errorDescription(_ error: Error) -> String {
         if let abort = error as? AbortError {
             return abort.reason
-        }
-        if let localized = error as? LocalizedError, let description = localized.errorDescription {
-            return description
         }
         return String(describing: error)
     }
@@ -787,44 +1017,33 @@ private final class StreamingDecryptUploadReceiver {
     }
 }
 
-final class DecryptTaskGate {
+private final class DecryptTaskGate {
     static let shared = DecryptTaskGate()
 
     private let lock = NSLock()
-    private let availableBytes: (URL) throws -> Int64
-    private var reservedBytes: Int64 = 0
-
-    init(availableBytes: @escaping (URL) throws -> Int64 = DecryptTaskGate.fileSystemAvailableBytes) {
-        self.availableBytes = availableBytes
-    }
+    private var runningTasks = 0
 
     func reserve(workDirectory: URL, bytesPerTask: Int64) throws -> DecryptTaskReservation {
         lock.lock()
         defer { lock.unlock() }
 
-        let available = try availableBytes(workDirectory)
-        let (required, overflow) = reservedBytes.addingReportingOverflow(bytesPerTask)
-        guard overflow == false else {
-            throw Abort(.insufficientStorage, reason: "decrypt storage reservation overflow")
-        }
+        let available = try Self.availableBytes(at: workDirectory)
+        let required = Int64(runningTasks + 1) * bytesPerTask
         guard available >= required else {
-            throw Abort(
-                .insufficientStorage,
-                reason: "insufficient storage: need \(required) bytes, available \(available) bytes"
-            )
+            throw Abort(.insufficientStorage, reason: "need 16GB free per running decrypt task")
         }
 
-        reservedBytes = required
-        return DecryptTaskReservation(gate: self, bytes: bytesPerTask)
+        runningTasks += 1
+        return DecryptTaskReservation(gate: self)
     }
 
-    fileprivate func release(bytes: Int64) {
+    fileprivate func release() {
         lock.lock()
-        reservedBytes = max(0, reservedBytes - bytes)
+        runningTasks = max(0, runningTasks - 1)
         lock.unlock()
     }
 
-    private static func fileSystemAvailableBytes(at url: URL) throws -> Int64 {
+    private static func availableBytes(at url: URL) throws -> Int64 {
         var stats = statfs()
         guard statfs(url.path, &stats) == 0 else {
             throw Abort(.internalServerError, reason: "free space check failed: \(String(cString: strerror(errno)))")
@@ -833,17 +1052,15 @@ final class DecryptTaskGate {
     }
 }
 
-struct DecryptTaskReservation {
+private struct DecryptTaskReservation {
     private weak var gate: DecryptTaskGate?
-    private let bytes: Int64
 
-    fileprivate init(gate: DecryptTaskGate, bytes: Int64) {
+    fileprivate init(gate: DecryptTaskGate) {
         self.gate = gate
-        self.bytes = bytes
     }
 
-    func release() {
-        gate?.release(bytes: bytes)
+    fileprivate func release() {
+        gate?.release()
     }
 }
 

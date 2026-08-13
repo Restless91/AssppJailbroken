@@ -19,6 +19,7 @@ export async function startDownload(data: {
   accountHash: string;
   downloadURL: string;
   sinfs: Sinf[];
+  forceExtensionDecryption?: boolean;
 }): Promise<DownloadTask> {
   return apiPost<DownloadTask>("/api/downloads", data);
 }

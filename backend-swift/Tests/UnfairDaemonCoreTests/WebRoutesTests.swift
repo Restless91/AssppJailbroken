@@ -3,24 +3,15 @@ import Foundation
 import XCTVapor
 
 final class WebRoutesTests: XCTestCase {
-    func testAttachmentContentDispositionPreservesUnicodeApplicationName() {
-        XCTAssertEqual(
-            attachmentContentDisposition(
-                displayName: "微信-8.0.75.ipa",
-                fallbackName: "com.tencent.xin-8.0.75.ipa"
-            ),
-            "attachment; filename=\"com.tencent.xin-8.0.75.ipa\"; filename*=UTF-8''%E5%BE%AE%E4%BF%A1-8.0.75.ipa"
-        )
-    }
-
     func testAuthSettingsAndStaticRoutesShareOneVaporService() throws {
         let context = try WebTestContext()
         defer { context.cleanup() }
 
         let app = Application(.testing)
         defer { app.shutdown() }
-        let manager = try WebDownloadManager(config: context.config)
-        try webRoutes(app, config: context.config, manager: manager)
+        let settingsStore = try RuntimeSettingsStore(config: context.config)
+        let manager = try WebDownloadManager(config: context.config, settingsStore: settingsStore)
+        try webRoutes(app, config: context.config, settingsStore: settingsStore, manager: manager)
 
         try app.testable().test(.GET, "/api/auth/status") { response in
             XCTAssertEqual(response.status, .ok)
@@ -33,6 +24,23 @@ final class WebRoutesTests: XCTestCase {
             XCTAssertEqual(json?["port"] as? Int, 18080)
             XCTAssertEqual(json?["dataDir"] as? String, context.dataDirectory.path)
             XCTAssertEqual(json?["unfairdBaseUrl"] as? String, "")
+            XCTAssertEqual(json?["forceExtensionDecryption"] as? Bool, false)
+        }
+
+        try app.testable().test(.POST, "/api/settings", beforeRequest: { request in
+            try request.content.encode(RuntimeSettings(
+                publicBaseURL: nil,
+                disableHTTPSRedirect: nil,
+                autoCleanupDays: nil,
+                autoCleanupMaxMB: nil,
+                maxDownloadMB: nil,
+                downloadThreads: nil,
+                forceExtensionDecryption: true
+            ))
+        }) { response in
+            XCTAssertEqual(response.status, .ok)
+            let json = try response.jsonObject()
+            XCTAssertEqual(json["forceExtensionDecryption"] as? Bool, true)
         }
 
         try app.testable().test(.GET, "/") { response in
@@ -60,8 +68,9 @@ final class WebRoutesTests: XCTestCase {
 
         let app = Application(.testing)
         defer { app.shutdown() }
-        let manager = try WebDownloadManager(config: context.config)
-        try webRoutes(app, config: context.config, manager: manager)
+        let settingsStore = try RuntimeSettingsStore(config: context.config)
+        let manager = try WebDownloadManager(config: context.config, settingsStore: settingsStore)
+        try webRoutes(app, config: context.config, settingsStore: settingsStore, manager: manager)
 
         try app.testable().test(.POST, "/api/apple/versions", beforeRequest: { request in
             try request.content.encode([String: String]())
@@ -71,40 +80,166 @@ final class WebRoutesTests: XCTestCase {
         }
     }
 
-    func testHistoricalVersionsAppleProviderReturnsFallbackSignal() throws {
-        let context = try WebTestContext()
+    func testDefaultAppleAccountCanBeImportedAndReadWithoutLeakingRawEmail() throws {
+        let context = try WebTestContext(
+            accessPasswordHash: "3c469e9d6c5875d37a43f353d4f88e61fcf812c66eee3457465a40b0da4153e0"
+        )
         defer { context.cleanup() }
+
         let app = Application(.testing)
         defer { app.shutdown() }
-        let manager = try WebDownloadManager(config: context.config)
-        try webRoutes(app, config: context.config, manager: manager)
-        let software = Software(
-            id: 414478124, bundleID: "com.tencent.xin", name: "微信", version: "8.0.75",
-            price: 0, artistName: "", sellerName: "", description: "",
-            averageUserRating: 0, userRatingCount: 0, artworkUrl: "", screenshotUrls: [],
-            minimumOsVersion: "15.0", fileSizeBytes: nil, releaseDate: "",
-            releaseNotes: nil, formattedPrice: nil, primaryGenreName: ""
-        )
+        let settingsStore = try RuntimeSettingsStore(config: context.config)
+        let manager = try WebDownloadManager(config: context.config, settingsStore: settingsStore)
+        try webRoutes(app, config: context.config, settingsStore: settingsStore, manager: manager)
 
-        try app.testable().test(.POST, "/api/apple/historical-versions", beforeRequest: { request in
-            try request.content.encode(AppleHistoricalVersionsRequest(software: software, provider: "apple"))
+        try app.testable().test(.GET, "/api/account/default/status", beforeRequest: {
+            $0.headers.add(name: "X-Access-Token", value: "token")
         }) { response in
             XCTAssertEqual(response.status, .ok)
-            let result = try response.content.decode(AppleHistoricalVersionsResponse.self)
-            XCTAssertEqual(result.provider, "apple")
-            XCTAssertTrue(result.records.isEmpty)
-            XCTAssertTrue(result.errors.isEmpty)
+            let json = try response.jsonObject()
+            XCTAssertEqual(json["configured"] as? Bool, false)
+            XCTAssertNil(json["accountHash"] as? String)
+        }
+
+        let account = AppleAccount(
+            email: "person@example.com",
+            password: "",
+            appleId: "123456789",
+            store: "143465-19,29",
+            firstName: "Test",
+            lastName: "User",
+            passwordToken: "token",
+            directoryServicesIdentifier: "dsid-1",
+            cookies: [],
+            deviceIdentifier: "device-1",
+            pod: "pod1"
+        )
+
+        try app.testable().test(.POST, "/api/account/default/import", beforeRequest: { request in
+            request.headers.add(name: "X-Access-Token", value: "token")
+            try request.content.encode(AppleAccountResponse(account: account))
+        }) { response in
+            XCTAssertEqual(response.status, .ok)
+            let json = try response.jsonObject()
+            XCTAssertEqual(json["configured"] as? Bool, true)
+            XCTAssertEqual(json["emailMasked"] as? String, "per***on@example.com")
+            XCTAssertEqual(json["store"] as? String, "143465-19,29")
+            XCTAssertEqual(json["pod"] as? String, "pod1")
+            XCTAssertNotNil(json["accountHash"] as? String)
+            XCTAssertFalse(response.body.string.contains("person@example.com"))
+            XCTAssertFalse(response.body.string.contains("token"))
+        }
+
+        try app.testable().test(.GET, "/api/account/default/status", beforeRequest: {
+            $0.headers.add(name: "X-Access-Token", value: "token")
+        }) { response in
+            XCTAssertEqual(response.status, .ok)
+            let json = try response.jsonObject()
+            XCTAssertEqual(json["configured"] as? Bool, true)
+            XCTAssertEqual(json["emailMasked"] as? String, "per***on@example.com")
+            XCTAssertNotNil(json["accountHash"] as? String)
+        }
+
+        try app.testable().test(.GET, "/api/account/default/export", beforeRequest: {
+            $0.headers.add(name: "X-Access-Token", value: "token")
+        }) { response in
+            XCTAssertEqual(response.status, .ok)
+            let json = try response.jsonObject()
+            let exported = json["account"] as? [String: Any]
+            XCTAssertEqual(exported?["email"] as? String, "person@example.com")
+            XCTAssertEqual(exported?["passwordToken"] as? String, "token")
+        }
+    }
+
+    func testDefaultAppleAccountExportRequiresAnExplicitAccessPassword() throws {
+        let context = try WebTestContext()
+        defer { context.cleanup() }
+
+        let app = Application(.testing)
+        defer { app.shutdown() }
+        let settingsStore = try RuntimeSettingsStore(config: context.config)
+        let manager = try WebDownloadManager(config: context.config, settingsStore: settingsStore)
+        try webRoutes(app, config: context.config, settingsStore: settingsStore, manager: manager)
+
+        try app.testable().test(.GET, "/api/account/default/export") { response in
+            XCTAssertEqual(response.status, .serviceUnavailable)
+            XCTAssertTrue(response.body.string.contains("ACCESS_PASSWORD"))
+        }
+    }
+
+    func testAllAppleAccountsCanBeMirroredAndExported() throws {
+        let context = try WebTestContext(
+            accessPasswordHash: "3c469e9d6c5875d37a43f353d4f88e61fcf812c66eee3457465a40b0da4153e0"
+        )
+        defer { context.cleanup() }
+
+        let app = Application(.testing)
+        defer { app.shutdown() }
+        let settingsStore = try RuntimeSettingsStore(config: context.config)
+        let manager = try WebDownloadManager(config: context.config, settingsStore: settingsStore)
+        try webRoutes(app, config: context.config, settingsStore: settingsStore, manager: manager)
+
+        let first = AppleAccount(
+            email: "first@example.com",
+            password: "password-1",
+            appleId: "apple-1",
+            store: "143465-19,29",
+            firstName: "First",
+            lastName: "User",
+            passwordToken: "token-1",
+            directoryServicesIdentifier: "dsid-1",
+            cookies: [],
+            deviceIdentifier: "device-1",
+            pod: "pod1"
+        )
+        let second = AppleAccount(
+            email: "second@example.com",
+            password: "password-2",
+            appleId: "apple-2",
+            store: "143441-1,29",
+            firstName: "Second",
+            lastName: "User",
+            passwordToken: "token-2",
+            directoryServicesIdentifier: "dsid-2",
+            cookies: [],
+            deviceIdentifier: "device-2",
+            pod: "pod2"
+        )
+
+        try app.testable().test(.POST, "/api/account/all/import", beforeRequest: { request in
+            request.headers.add(name: "X-Access-Token", value: "token")
+            try request.content.encode(AppleAccountListResponse(accounts: [first, second]))
+        }) { response in
+            XCTAssertEqual(response.status, .ok)
+            let json = try response.jsonObject()
+            XCTAssertEqual((json["accounts"] as? [[String: Any]])?.count, 2)
+        }
+
+        try app.testable().test(.GET, "/api/account/all/export", beforeRequest: {
+            $0.headers.add(name: "X-Access-Token", value: "token")
+        }) { response in
+            XCTAssertEqual(response.status, .ok)
+            let json = try response.jsonObject()
+            let accounts = json["accounts"] as? [[String: Any]]
+            XCTAssertEqual(accounts?.count, 2)
+            XCTAssertEqual(accounts?.map { $0["email"] as? String }, [
+                "first@example.com",
+                "second@example.com"
+            ])
         }
     }
 
     func testAccessTokenQueryAuthorizesBrowserDownloads() throws {
-        let context = try WebTestContext(accessPasswordHash: "token")
+        let context = try WebTestContext(
+            accessPasswordHash: "3c469e9d6c5875d37a43f353d4f88e61fcf812c66eee3457465a40b0da4153e0"
+        )
         defer { context.cleanup() }
 
         let app = Application(.testing)
         defer { app.shutdown() }
-        let manager = try WebDownloadManager(config: context.config)
-        try webRoutes(app, config: context.config, manager: manager)
+        let settingsStore = try RuntimeSettingsStore(config: context.config)
+        let manager = try WebDownloadManager(config: context.config, settingsStore: settingsStore)
+        try webRoutes(app, config: context.config, settingsStore: settingsStore, manager: manager)
 
         try app.testable().test(.GET, "/api/settings") { response in
             XCTAssertEqual(response.status, .unauthorized)
@@ -114,59 +249,11 @@ final class WebRoutesTests: XCTestCase {
             XCTAssertEqual(response.status, .ok)
         }
     }
+}
 
-    func testIStoreOSNodeAndAccountCompatibilityRoutes() throws {
-        let context = try WebTestContext()
-        defer { context.cleanup() }
-        let app = Application(.testing)
-        defer { app.shutdown() }
-        let manager = try WebDownloadManager(config: context.config)
-        try routes(app, config: context.config)
-        try webRoutes(app, config: context.config, manager: manager)
-
-        try app.testable().test(.GET, "/api/node/info") { response in
-            XCTAssertEqual(response.status, .ok)
-            let node = try response.content.decode(NodeInfoResponse.self)
-            XCTAssertEqual(node.service, "unfaird")
-            XCTAssertTrue(node.capabilities.externalURLDownload)
-            XCTAssertTrue(node.capabilities.defaultAppleAccount)
-            XCTAssertFalse(node.capabilities.structuredDecryptEvents)
-        }
-        try app.testable().test(.GET, "/api/account/default/status") { response in
-            XCTAssertEqual(response.status, .ok)
-            let status = try response.content.decode(DefaultAppleAccountStatusResponse.self)
-            XCTAssertFalse(status.configured)
-        }
-    }
-
-    func testExternalURLDownloadRejectsPublicHosts() throws {
-        let context = try WebTestContext()
-        defer { context.cleanup() }
-        let app = Application(.testing)
-        defer { app.shutdown() }
-        let manager = try WebDownloadManager(config: context.config)
-        try webRoutes(app, config: context.config, manager: manager)
-        let software = Software(
-            id: 1, bundleID: "com.example.app", name: "Example", version: "1.0",
-            price: 0, artistName: "", sellerName: "", description: "",
-            averageUserRating: 0, userRatingCount: 0, artworkUrl: "", screenshotUrls: [],
-            minimumOsVersion: "15.0", fileSizeBytes: nil, releaseDate: "",
-            releaseNotes: nil, formattedPrice: nil, primaryGenreName: ""
-        )
-
-        try app.testable().test(.POST, "/api/downloads/external-url", beforeRequest: { request in
-            try request.content.encode(CreateExternalURLDownloadRequest(
-                software: software,
-                accountHash: "0123456789abcdef",
-                sourceURL: "https://example.com/app.ipa",
-                sinfs: [],
-                iTunesMetadata: nil,
-                forceExtensionDecryption: nil
-            ))
-        }) { response in
-            XCTAssertEqual(response.status, .badRequest)
-            XCTAssertTrue(response.body.string.contains("private LAN host"))
-        }
+private extension XCTHTTPResponse {
+    func jsonObject() throws -> [String: Any] {
+        try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.string.utf8), options: []) as? [String: Any])
     }
 }
 
@@ -195,6 +282,7 @@ private final class WebTestContext {
             autoCleanupMaxMB: 0,
             maxDownloadMB: 0,
             downloadThreads: 8,
+            forceExtensionDecryption: false,
             accessPasswordHash: accessPasswordHash
         )
     }

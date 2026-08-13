@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useDownloadsStore } from "../store/downloads";
 import { useAccounts } from "./useAccounts";
 import { accountHash } from "../utils/account";
+import { getDefaultAccountStatus } from "../api/apple";
 
 export function useDownloads() {
   const {
@@ -24,6 +25,10 @@ export function useDownloads() {
     (async () => {
       // Calculate original hashes preserving the order corresponding to 'accounts'
       const hashes = await Promise.all(accounts.map((a) => accountHash(a)));
+      const defaultAccount = await getDefaultAccountStatus().catch(() => null);
+      if (defaultAccount?.configured && defaultAccount.accountHash) {
+        hashes.push(defaultAccount.accountHash);
+      }
       // Use slice() before sort() so we don't mutate the original 'hashes' array
       const key = hashes.slice().sort().join(",");
       if (cancelled || key === hashesRef.current) return;
@@ -33,6 +38,9 @@ export function useDownloads() {
       for (let i = 0; i < accounts.length; i++) {
         // Now hashes[i] correctly maps to accounts[i]
         map[hashes[i]] = accounts[i].email;
+      }
+      if (defaultAccount?.configured && defaultAccount.accountHash) {
+        map[defaultAccount.accountHash] = defaultAccount.emailMasked || "iPhone 默认账户";
       }
       setHashToEmail(map);
 

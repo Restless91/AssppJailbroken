@@ -99,6 +99,16 @@ build/
 build/Release
 coverage
 debs/
+*.bak*
+*.orig
+backend-swift/packaging/.ldid.*
+backend-swift/Sources/CFridaCore/lib/
+backend-swift/Sources/CFridaCore/include/frida-core.h
+backend-swift/Sources/CFridaShim/
+backend-swift/backups/
+backend-swift/.build/
+private-platform/data/
+private-platform/config.local.json
 default.profraw
 dist
 dockerbuild

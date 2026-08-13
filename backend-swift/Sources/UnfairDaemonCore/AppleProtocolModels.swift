@@ -82,6 +82,7 @@ struct AppleDownloadOutput: Content {
     var bundleShortVersionString: String
     var bundleVersion: String
     var iTunesMetadata: String
+    var minimumOSVersion: String?
 }
 
 struct AppleAuthenticateRequest: Content {
@@ -118,10 +119,15 @@ struct AppleDownloadRequest: Content {
     var software: Software
     var accountHash: String
     var externalVersionId: String?
+    var forceExtensionDecryption: Bool?
 }
 
 struct AppleAccountResponse: Content {
     var account: AppleAccount
+}
+
+struct AppleAccountListResponse: Content {
+    var accounts: [AppleAccount]
 }
 
 struct AppleVersionListResponse: Content {

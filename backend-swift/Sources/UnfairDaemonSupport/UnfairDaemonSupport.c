@@ -5,22 +5,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <zlib.h>
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
 #endif
-
-#define UNFAIRD_MEMORYSTATUS_CMD_SET_MEMLIMIT_PROPERTIES 7
-#define UNFAIRD_MEMORYSTATUS_CMD_GET_MEMLIMIT_PROPERTIES 8
-
-typedef struct unfaird_memlimit_properties {
-    int32_t memlimit_active;
-    uint32_t memlimit_active_attr;
-    int32_t memlimit_inactive;
-    uint32_t memlimit_inactive_attr;
-} unfaird_memlimit_properties_t;
-
-extern int memorystatus_control(unsigned int command, int pid, unsigned int flags, void *buffer, size_t buffersize);
 
 static void unfaird_set_error(char *error, size_t error_size, const char *format, ...) {
     if (error == NULL || error_size == 0) {
@@ -34,67 +23,51 @@ static void unfaird_set_error(char *error, size_t error_size, const char *format
 }
 
 int unfaird_raise_jetsam_limit(int32_t megabytes, char *error, size_t error_size) {
-#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
-    int pid = getpid();
-    unfaird_memlimit_properties_t properties = {
-        .memlimit_active = megabytes,
-        .memlimit_active_attr = 0,
-        .memlimit_inactive = megabytes,
-        .memlimit_inactive_attr = 0,
-    };
-    int result = memorystatus_control(
-        UNFAIRD_MEMORYSTATUS_CMD_SET_MEMLIMIT_PROPERTIES,
-        pid,
-        0,
-        &properties,
-        sizeof(properties)
-    );
-    if (result != 0) {
-        unfaird_set_error(error, error_size, "memorystatus set limit %d MB failed: %s", megabytes, strerror(errno));
-        return -1;
-    }
-
-    int32_t active = 0;
-    int32_t inactive = 0;
-    if (unfaird_get_jetsam_limits(&active, &inactive, error, error_size) != 0) {
-        return -1;
-    }
-    if (active != megabytes || inactive != megabytes) {
-        unfaird_set_error(error, error_size, "memorystatus verification failed: requested %d MB, got active=%d MB inactive=%d MB", megabytes, active, inactive);
-        return -1;
-    }
-
-    return 0;
-#else
+    /*
+     * Do not call the private memorystatus_control commands here. On iOS 17
+     * rootless environments those calls can corrupt launchd's memorystatus
+     * bookkeeping and panic the device when a large package is processed.
+     * Resource use is bounded by streaming I/O and downloader concurrency.
+     */
     (void)megabytes;
     (void)error;
     (void)error_size;
     return 0;
-#endif
 }
 
-int unfaird_get_jetsam_limits(int32_t *active_megabytes, int32_t *inactive_megabytes, char *error, size_t error_size) {
-#if defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE
-    unfaird_memlimit_properties_t properties = {0};
-    int result = memorystatus_control(
-        UNFAIRD_MEMORYSTATUS_CMD_GET_MEMLIMIT_PROPERTIES,
-        getpid(),
-        0,
-        &properties,
-        sizeof(properties)
-    );
-    if (result != 0) {
-        unfaird_set_error(error, error_size, "memorystatus get limit failed: %s", strerror(errno));
+int unfaird_inflate_raw(
+    const uint8_t *source,
+    size_t source_size,
+    uint8_t *destination,
+    size_t destination_size,
+    size_t *written,
+    char *error,
+    size_t error_size
+) {
+    if (source == NULL || destination == NULL || written == NULL) {
+        unfaird_set_error(error, error_size, "invalid inflate buffer");
         return -1;
     }
-    if (active_megabytes != NULL) *active_megabytes = properties.memlimit_active;
-    if (inactive_megabytes != NULL) *inactive_megabytes = properties.memlimit_inactive;
+
+    z_stream stream;
+    memset(&stream, 0, sizeof(stream));
+    stream.next_in = (Bytef *)source;
+    stream.avail_in = (uInt)source_size;
+    stream.next_out = destination;
+    stream.avail_out = (uInt)destination_size;
+
+    int status = inflateInit2(&stream, -MAX_WBITS);
+    if (status != Z_OK) {
+        unfaird_set_error(error, error_size, "inflateInit2 failed: %d", status);
+        return -1;
+    }
+
+    status = inflate(&stream, Z_FINISH);
+    *written = stream.total_out;
+    inflateEnd(&stream);
+    if (status != Z_STREAM_END) {
+        unfaird_set_error(error, error_size, "inflate failed: %d", status);
+        return -1;
+    }
     return 0;
-#else
-    if (active_megabytes != NULL) *active_megabytes = 0;
-    if (inactive_megabytes != NULL) *inactive_megabytes = 0;
-    (void)error;
-    (void)error_size;
-    return 0;
-#endif
 }

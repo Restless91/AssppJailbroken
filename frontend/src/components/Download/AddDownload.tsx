@@ -7,7 +7,8 @@ import { useAccounts } from "../../hooks/useAccounts";
 import { useDownloadAction } from "../../hooks/useDownloadAction";
 import { useSettingsStore } from "../../store/settings";
 import { useToastStore } from "../../store/toast";
-import { listVersions } from "../../api/apple";
+import { getDefaultAccountStatus, listVersions } from "../../api/apple";
+import { apiGet } from "../../api/client";
 import { lookupApp } from "../../api/search";
 import { getAccountOptionLabel } from "../../utils/accountDisplay";
 import { firstAccountCountry } from "../../utils/account";
@@ -31,9 +32,14 @@ export default function AddDownload() {
   const [country, setCountry] = useState(defaultCountry);
   const [countryTouched, setCountryTouched] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState("");
+  const [defaultAccount, setDefaultAccount] = useState<{
+    configured: boolean;
+    emailMasked?: string;
+  } | null>(null);
   const [app, setApp] = useState<Software | null>(null);
   const [versions, setVersions] = useState<string[]>([]);
   const [selectedVersion, setSelectedVersion] = useState("");
+  const [forceExtensionDecryption, setForceExtensionDecryption] = useState(false);
   const [step, setStep] = useState<"lookup" | "ready" | "versions">("lookup");
   const [loadingAction, setLoadingAction] = useState<
     "lookup" | "license" | "versions" | "download" | null
@@ -73,7 +79,15 @@ export default function AddDownload() {
   }, [filteredAccounts, selectedAccount]);
 
   const account = accounts.find((a) => a.email === selectedAccount);
+  const canUseDefaultAccount = defaultAccount?.configured === true;
   const autoCountry = firstAccountCountry(accounts);
+
+  useEffect(() => {
+    getDefaultAccountStatus().then(setDefaultAccount).catch(() => setDefaultAccount(null));
+    apiGet<{ forceExtensionDecryption?: boolean }>("/api/settings")
+      .then((settings) => setForceExtensionDecryption(settings.forceExtensionDecryption === true))
+      .catch(() => setForceExtensionDecryption(false));
+  }, []);
 
   useEffect(() => {
     if (countryTouched) return;
@@ -130,10 +144,12 @@ export default function AddDownload() {
   }
 
   async function handleDownload() {
-    if (!account || !app) return;
+    if ((!account && !canUseDefaultAccount) || !app) return;
     setLoadingAction("download");
     try {
-      await startDownload(account, app, selectedVersion || undefined);
+      await startDownload(account, app, selectedVersion || undefined, {
+        forceExtensionDecryption,
+      });
     } catch (e) {
       toastDownloadError(account, app, e);
     } finally {
@@ -181,24 +197,26 @@ export default function AddDownload() {
               disabled={isLoading}
               className="w-1/2 truncate"
             />
-            <select
-              value={selectedAccount}
-              onChange={(e) => setSelectedAccount(e.target.value)}
-              className="field-input field-select w-1/2 truncate"
-              disabled={isLoading || filteredAccounts.length === 0}
-            >
-              {filteredAccounts.length > 0 ? (
-                filteredAccounts.map((a, index) => (
+            {filteredAccounts.length > 0 ? (
+              <select
+                value={selectedAccount}
+                onChange={(e) => setSelectedAccount(e.target.value)}
+                className="field-input field-select w-1/2 truncate"
+                disabled={isLoading}
+              >
+                {filteredAccounts.map((a, index) => (
                   <option key={a.email} value={a.email}>
                     {getAccountOptionLabel(a, t, demoMode, index)}
                   </option>
-                ))
-              ) : (
-                <option value="">
-                  {t("downloads.add.noAccountsForRegion")}
-                </option>
-              )}
-            </select>
+                ))}
+              </select>
+            ) : (
+              <div className="field-input w-1/2 truncate text-muted">
+                {canUseDefaultAccount
+                  ? `iPhone 默认账户：${defaultAccount?.emailMasked || "已配置"}`
+                  : t("downloads.add.noAccountsForRegion")}
+              </div>
+            )}
           </div>
         </form>
 
@@ -266,6 +284,25 @@ export default function AddDownload() {
               </div>
             )}
 
+            <div className="mb-4 rounded-[14px] border border-border bg-muted/20 p-3">
+              <label className="flex items-start gap-2 text-[13px] text-ink">
+                <input
+                  type="checkbox"
+                  checked={forceExtensionDecryption}
+                  onChange={(e) => setForceExtensionDecryption(e.target.checked)}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-medium">
+                    {t("downloads.add.forceExtensions")}
+                  </span>
+                  <span className="mt-1 block text-[12px] text-muted">
+                    {t("downloads.add.forceExtensionsHelp")}
+                  </span>
+                </span>
+              </label>
+            </div>
+
             <div className="flex flex-wrap gap-2">
               {(app.price === undefined || app.price === 0) && (
                 <button
@@ -291,7 +328,7 @@ export default function AddDownload() {
               )}
               <button
                 onClick={handleDownload}
-                disabled={isLoading || !account}
+                disabled={isLoading || (!account && !canUseDefaultAccount)}
                 className="btn btn-primary btn-sm"
               >
                 {loadingAction === "download"

@@ -1,5 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<?xml version='1.0' encoding='UTF-8'?>
 <plist version="1.0">
 <dict>
     <key>application-identifier</key>
@@ -7,34 +6,86 @@
     <key>com.apple.developer.team-identifier</key>
     <string>-</string>
     <key>platform-application</key>
-    <true/>
-    <key>com.apple.private.security.no-container</key>
-    <true/>
-    <key>com.apple.private.security.no-sandbox</key>
-    <true/>
-    <key>com.apple.private.security.storage.AppBundles</key>
-    <true/>
-    <key>com.apple.private.skip-library-validation</key>
-    <true/>
-    <key>com.apple.private.cs.debugger</key>
-    <true/>
-    <key>com.apple.security.get-task-allow</key>
-    <true/>
+    <true />
+    <key>task_for_pid-allow</key>
+    <true />
     <key>get-task-allow</key>
-    <true/>
-    <key>run-unsigned-code</key>
-    <true/>
+    <true />
+    <key>com.apple.security.get-task-allow</key>
+    <true />
+    <key>com.apple.system-task-ports</key>
+    <true />
+    <key>com.apple.system-task-ports.control</key>
+    <true />
+    <key>com.apple.private.thread-set-state</key>
+    <true />
+    <key>com.apple.private.xpc.domain-extension</key>
+    <true />
+    <key>com.apple.private.xpc.domain-extension.proxy</key>
+    <true />
+    <key>com.apple.private.xpc.launchd.job-manager</key>
+    <string>com.apple.runningboard</string>
+    <key>com.apple.runningboard.process-state</key>
+    <true />
+    <key>com.apple.springboard.launchapplications</key>
+    <true />
+    <key>com.apple.springboard.debugapplications</key>
+    <true />
+    <key>com.apple.frontboard.launchapplications</key>
+    <true />
+    <key>com.apple.frontboard.debugapplications</key>
+    <true />
+    <key>com.apple.backboardd.launchapplications</key>
+    <true />
+    <key>com.apple.backboardd.debugapplications</key>
+    <true />
+    <key>com.apple.private.security.no-container</key>
+    <true />
+    <key>com.apple.private.security.no-sandbox</key>
+    <true />
     <key>dynamic-codesigning</key>
-    <true/>
+    <true />
+    <key>com.apple.private.skip-library-validation</key>
+    <true />
+    <key>com.apple.CommCenter.fine-grained</key>
+    <array>
+        <string>data-allowed-write</string>
+    </array>
+    <key>com.apple.private.coreservices.canmaplsdatabase</key>
+    <true />
+    <key>com.apple.lsapplicationworkspace.rebuildappdatabases</key>
+    <true />
+    <key>com.apple.itunesstored.private</key>
+    <true />
+    <key>com.apple.private.uninstall.deletion</key>
+    <true />
+    <key>SBAppUsesLocalNotifications</key>
+    <true />
+    <key>com.apple.private.mobileinstall.allowedSPI</key>
+    <array>
+        <string>UninstallForLaunchServices</string>
+        <string>SetCapabilities</string>
+        <string>Lookup</string>
+    </array>
+    <key>com.apple.mobile.deleted.AllowFreeSpace</key>
+    <true />
+    <key>com.apple.private.security.container-manager</key>
+    <true />
+    <key>com.apple.private.MobileContainerManager.allowed</key>
+    <true />
+    <key>com.apple.private.security.storage.AppBundles</key>
+    <true />
+    <key>com.apple.private.security.storage.MobileDocuments</key>
+    <true />
     <key>com.apple.security.exception.iokit-user-client-class</key>
     <array>
         <string>IOSurfaceRootUserClient</string>
     </array>
     <key>com.apple.private.security.storage-exempt.heritable</key>
-    <true/>
+    <true />
     <key>com.apple.security.exception.files.absolute-path.read-write</key>
     <array>
         <string>/</string>
     </array>
-</dict>
+<key>com.apple.private.memorystatus</key><true /></dict>
 </plist>

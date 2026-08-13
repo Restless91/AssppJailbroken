@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import PageContainer from "../Layout/PageContainer";
 import AppIcon from "../common/AppIcon";
@@ -13,6 +13,7 @@ import { countryCodeMap, storeIdToCountry } from "../../apple/config";
 
 export default function SearchPage() {
   const { t } = useTranslation();
+  const location = useLocation();
   const { defaultCountry, defaultEntity } = useSettingsStore();
   const { accounts } = useAccounts();
   const initialCountry = firstAccountCountry(accounts) ?? defaultCountry;
@@ -42,6 +43,23 @@ export default function SearchPage() {
 
   const activeCountry = country || initialCountry;
   const activeEntity = entity || defaultEntity;
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const urlTerm = params.get("term")?.trim();
+    const urlCountry = params.get("country") || activeCountry;
+    const urlEntity = params.get("entity") || activeEntity;
+    if (!urlTerm) return;
+    if (
+      urlTerm === term &&
+      urlCountry === activeCountry &&
+      urlEntity === activeEntity &&
+      results.length > 0
+    ) {
+      return;
+    }
+    search(urlTerm, urlCountry, urlEntity);
+  }, [location.search]);
 
   const availableCountryCodes = Array.from(
     new Set(

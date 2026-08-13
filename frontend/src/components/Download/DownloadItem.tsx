@@ -3,14 +3,13 @@ import { useTranslation } from "react-i18next";
 import AppIcon from "../common/AppIcon";
 import Badge from "../common/Badge";
 import ProgressBar from "../common/ProgressBar";
-import VerificationSummary from "./VerificationSummary";
+import DecryptSummary from "./DecryptSummary";
 import type { DownloadTask } from "../../types";
 
 interface DownloadItemProps {
   task: DownloadTask;
   onPause: (id: string) => void;
   onResume: (id: string) => void;
-  onRetry: (id: string) => void;
   onDelete: (id: string) => void;
 }
 
@@ -18,7 +17,6 @@ export default function DownloadItem({
   task,
   onPause,
   onResume,
-  onRetry,
   onDelete,
 }: DownloadItemProps) {
   const { t } = useTranslation();
@@ -27,8 +25,7 @@ export default function DownloadItem({
     task.status === "downloading" ||
     task.status === "injecting" ||
     task.status === "decrypting";
-  const canPause =
-    task.status === "downloading" || task.status === "decrypting";
+  const canPause = task.status === "downloading";
   const isPaused = task.status === "paused";
   const isCompleted = task.status === "completed";
 
@@ -68,19 +65,13 @@ export default function DownloadItem({
             </div>
           )}
 
-          {task.status === "pending" && task.queuePosition != null && (
-            <p className="mt-2 text-[12px] font-medium text-muted">
-              {t("downloads.queuePosition", { position: task.queuePosition })}
-            </p>
-          )}
-
           {task.error && (
             <p className="alert mt-2 text-[12px]" data-tone="error">
               {task.error}
             </p>
           )}
 
-          <VerificationSummary verification={task.verification} sha256={task.sha256} errorCode={task.errorCode} compact />
+          <DecryptSummary events={task.decryptEvents} compact />
 
           <div className="flex flex-wrap gap-2 mt-3">
             {canPause && (
@@ -97,14 +88,6 @@ export default function DownloadItem({
                 className="btn btn-primary btn-sm"
               >
                 {t("downloads.package.resume")}
-              </button>
-            )}
-            {task.status === "failed" && task.canRetry && (
-              <button
-                onClick={() => onRetry(task.id)}
-                className="btn btn-primary btn-sm"
-              >
-                {t("downloads.package.retry")}
               </button>
             )}
             {isCompleted && task.hasFile && (

@@ -16,11 +16,20 @@ PREFIX="$(resolve_prefix)"
 UNFAIRD_PLIST="$PREFIX/Library/LaunchDaemons/$UNFAIRD_LABEL.plist"
 LEGACY_ASSPPWEB_PLIST="$PREFIX/Library/LaunchDaemons/$LEGACY_ASSPPWEB_LABEL.plist"
 
+unload_service_domains() {
+  label="$1"
+  plist="$2"
+  launchctl bootout "system/$label" >/dev/null 2>&1 || true
+  launchctl bootout "user/501/$label" >/dev/null 2>&1 || true
+  launchctl bootout "gui/501/$label" >/dev/null 2>&1 || true
+  launchctl unload "$plist" >/dev/null 2>&1 || true
+}
+
 case "$1" in
   remove|upgrade|deconfigure)
     if command -v launchctl >/dev/null 2>&1; then
-      launchctl bootout system/$LEGACY_ASSPPWEB_LABEL >/dev/null 2>&1 || launchctl unload "$LEGACY_ASSPPWEB_PLIST" >/dev/null 2>&1 || true
-      launchctl bootout system/$UNFAIRD_LABEL >/dev/null 2>&1 || launchctl unload "$UNFAIRD_PLIST" >/dev/null 2>&1 || true
+      unload_service_domains "$LEGACY_ASSPPWEB_LABEL" "$LEGACY_ASSPPWEB_PLIST"
+      unload_service_domains "$UNFAIRD_LABEL" "$UNFAIRD_PLIST"
     fi
     ;;
 esac

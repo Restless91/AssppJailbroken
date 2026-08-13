@@ -2,7 +2,6 @@ import { join } from 'node:path';
 import { AdminDatabase } from './admin-db.mjs';
 import { createAppleAccountAdminService } from './apple-account-admin.mjs';
 import { WechatGatewayClient } from './wechat-gateway.mjs';
-import { createRateLimiter, readBoundedBody, requireHeaderToken } from './request-security.mjs';
 
 const ADMIN_COOKIE = 'asspp_admin_session';
 
@@ -14,8 +13,7 @@ export function createAdminSystem({
   getJobSummaries = null,
   getJobDetail = null,
   adminJobAction = null,
-  testStorage = null,
-  decorateDevice = (device) => device
+  testStorage = null
 }) {
   const databasePath = process.env.PLATFORM_DATABASE || join(rootDir, 'data', 'platform.sqlite');
   const store = new AdminDatabase({ path: databasePath, legacyConfig: config });
@@ -23,7 +21,6 @@ export function createAdminSystem({
   let monitorTimer = null;
   const eventClients = new Set();
   const alertDedup = new Map();
-  const loginRateLimiter = createRateLimiter({ limit: 10, windowMs: 5 * 60_000 });
 
   async function handle(req, res, url) {
     if (!url.pathname.startsWith('/api/admin/')) return false;
@@ -58,7 +55,6 @@ export function createAdminSystem({
     }
 
     if (url.pathname === '/api/admin/auth/login' && req.method === 'POST') {
-      enforceRateLimit(loginRateLimiter, clientIP(req), res);
       const body = await readJson(req);
       const result = store.authenticateAdmin({
         ...body,
@@ -618,15 +614,11 @@ export function createAdminSystem({
       maxAttemptsPerDevice: 2,
       maxDevicesPerJob: 3,
       maxAttemptsPerJob: 5,
-      maxQueuedGlobal: 100,
-      maxQueuedPerUser: 3,
-      maxActivePerUser: 1,
       minimumFreeBytes: 2 * 1024 * 1024 * 1024,
       requiredSpaceMultiplier: 3,
       storageOverheadBytes: 512 * 1024 * 1024,
       storageBudgetVersion: 2,
       skipExtensions: false,
-      extensionDecryptionPolicy: 'auto',
       ...stored,
       ...storageBudget
     };
@@ -642,8 +634,8 @@ export function createAdminSystem({
     startMonitor,
     store,
     currentAdmin,
-    schedulingDevices: () => store.schedulingDevices().map(decorateDevice),
-    publicDevices: () => store.listDevices().map(decorateDevice),
+    schedulingDevices: () => store.schedulingDevices(),
+    publicDevices: () => store.listDevices(),
     schedulerSettings,
     effectiveDeviceConfig,
     notifyOperations: sendWecomAlert
@@ -689,24 +681,20 @@ function normalizeNodeInfo(value) {
 
 function requireLegacyBootstrapToken(req, config) {
   if (!config.adminToken) return;
-  if (!requireHeaderToken(req, config.adminToken)) throw httpError(401, 'legacy admin token required for bootstrap');
+  const token = req.headers['x-admin-token'];
+  if (token !== config.adminToken) throw httpError(401, 'legacy admin token required for bootstrap');
 }
 
 async function readJson(req) {
-  const body = await readBoundedBody(req, { maxBytes: 2 * 1024 * 1024 });
+  let body = '';
+  for await (const chunk of req) {
+    body += chunk;
+    if (body.length > 2 * 1024 * 1024) throw httpError(413, 'request body is too large');
+  }
   try {
     return body ? JSON.parse(body) : {};
   } catch {
     throw httpError(400, 'invalid JSON body');
-  }
-}
-
-function enforceRateLimit(limiter, key, res) {
-  const result = limiter.consume(key);
-  res.setHeader('X-RateLimit-Remaining', String(result.remaining));
-  if (!result.allowed) {
-    res.setHeader('Retry-After', String(Math.max(1, Math.ceil(result.retryAfterMs / 1000))));
-    throw httpError(429, 'too many requests');
   }
 }
 

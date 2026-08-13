@@ -17,8 +17,6 @@ find_libjailbreak() {
   for candidate in \
     "$prefix/usr/lib/libjailbreak.dylib" \
     "$prefix/basebin/libjailbreak.dylib" \
-    /var/jb/usr/lib/libjailbreak.dylib \
-    /var/jb/basebin/libjailbreak.dylib \
     /basebin/libjailbreak.dylib \
     /usr/lib/libjailbreak.dylib
   do
@@ -30,13 +28,15 @@ find_libjailbreak() {
   return 1
 }
 
-find_external_decrypt_provider() {
-  prefix="$1"
+find_taurine_runtime() {
   for candidate in \
-    "$prefix/usr/local/lib/unfaird/fouldecrypt.kernrw" \
-    /usr/local/lib/unfaird/fouldecrypt.kernrw
+    /usr/lib/libkernrw.0.dylib \
+    /usr/lib/libkernrw.dylib \
+    /usr/lib/libiosexec.1.dylib \
+    /usr/lib/libdimentio.0.dylib \
+    /usr/lib/pspawn_payload-stg2.dylib
   do
-    if [ -x "$candidate" ]; then
+    if [ -e "$candidate" ]; then
       printf '%s\n' "$candidate"
       return 0
     fi
@@ -49,14 +49,21 @@ BINARY="$PREFIX/usr/local/lib/unfaird/UnfairDaemon"
 UNFAIRD_PLIST="$PREFIX/Library/LaunchDaemons/$UNFAIRD_LABEL.plist"
 LEGACY_ASSPPWEB_PLIST="$PREFIX/Library/LaunchDaemons/$LEGACY_ASSPPWEB_LABEL.plist"
 
+unload_service_domains() {
+  label="$1"
+  launchctl bootout "system/$label" >/dev/null 2>&1 || true
+  launchctl bootout "user/501/$label" >/dev/null 2>&1 || true
+  launchctl bootout "gui/501/$label" >/dev/null 2>&1 || true
+}
+
 LIBJAILBREAK="$(find_libjailbreak "$PREFIX" || true)"
 if [ -z "$LIBJAILBREAK" ]; then
-  EXTERNAL_PROVIDER="$(find_external_decrypt_provider "$PREFIX" || true)"
-  if [ -z "$EXTERNAL_PROVIDER" ]; then
-    echo "$UNFAIRD_LABEL requires libjailbreak.dylib or fouldecrypt.kernrw" >&2
+  TAURINE_RUNTIME="$(find_taurine_runtime || true)"
+  if [ -z "$TAURINE_RUNTIME" ]; then
+    echo "$UNFAIRD_LABEL requires libjailbreak.dylib at $PREFIX/usr/lib, $PREFIX/basebin, /basebin, or /usr/lib" >&2
     exit 1
   fi
-  echo "$UNFAIRD_LABEL using external decrypt provider: $EXTERNAL_PROVIDER" >&2
+  echo "$UNFAIRD_LABEL warning: libjailbreak.dylib was not found, but Taurine/Procursus runtime was detected at $TAURINE_RUNTIME" >&2
 fi
 
 install -d -m 0755 /var/tmp/unfaird/jobs /var/tmp/unfaird/logs /var/folders/bg/unfaird/T /var/folders/bg/unfaird/X /var/mobile/AssppWebData/packages
@@ -76,23 +83,27 @@ if ! command -v launchctl >/dev/null 2>&1; then
   exit 1
 fi
 
-launchctl bootout system/$LEGACY_ASSPPWEB_LABEL >/dev/null 2>&1 || launchctl unload "$LEGACY_ASSPPWEB_PLIST" >/dev/null 2>&1 || true
+unload_service_domains "$LEGACY_ASSPPWEB_LABEL"
 launchctl disable system/$LEGACY_ASSPPWEB_LABEL >/dev/null 2>&1 || true
+launchctl disable user/501/$LEGACY_ASSPPWEB_LABEL >/dev/null 2>&1 || true
+launchctl disable gui/501/$LEGACY_ASSPPWEB_LABEL >/dev/null 2>&1 || true
 
 load_service() {
   label="$1"
   plist="$2"
-  launchctl bootout system/$label >/dev/null 2>&1 || true
-  if launchctl bootstrap system "$plist" >/var/tmp/unfaird/$label.launchctl.log 2>&1; then
-    launchctl enable system/$label >/dev/null 2>&1 || true
-    return 0
+  log="/var/tmp/unfaird/$label.launchctl.log"
+  unload_service_domains "$label"
+  if ! launchctl bootstrap system "$plist" >"$log" 2>&1; then
+    echo "$label system launchctl bootstrap failed" >&2
+    cat "$log" >&2
+    exit 1
   fi
-  if launchctl load -w "$plist" >>/var/tmp/unfaird/$label.launchctl.log 2>&1; then
-    return 0
+  launchctl enable "system/$label" >>"$log" 2>&1 || true
+  if ! launchctl kickstart -k "system/$label" >>"$log" 2>&1; then
+    echo "$label system launchctl kickstart failed" >&2
+    cat "$log" >&2
+    exit 1
   fi
-  echo "$label launchctl load failed" >&2
-  cat /var/tmp/unfaird/$label.launchctl.log >&2
-  exit 1
 }
 
 load_service "$UNFAIRD_LABEL" "$UNFAIRD_PLIST"

@@ -3,9 +3,14 @@ import { useParams, useLocation, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import PageContainer from "../Layout/PageContainer";
 import AppIcon from "../common/AppIcon";
+import Spinner from "../common/Spinner";
 import { useAccounts } from "../../hooks/useAccounts";
-import { useDownloadAction } from "../../hooks/useDownloadAction";
+import {
+  useDownloadAction,
+  type DownloadPreparationStage,
+} from "../../hooks/useDownloadAction";
 import { useSettingsStore } from "../../store/settings";
+import { getDefaultAccountStatus } from "../../api/apple";
 import { lookupApp } from "../../api/search";
 import { getAccountOptionLabel } from "../../utils/accountDisplay";
 import { storeIdToCountry } from "../../apple/config";
@@ -31,8 +36,17 @@ export default function ProductDetail() {
   const [app, setApp] = useState<Software | null>(stateApp ?? null);
   const [loading, setLoading] = useState(!stateApp);
   const [selectedAccount, setSelectedAccount] = useState("");
+  const [defaultAccount, setDefaultAccount] = useState<{
+    configured: boolean;
+    emailMasked?: string;
+  } | null>(null);
   const [loadingAction, setLoadingAction] = useState<
     "purchase" | "download" | null
+  >(null);
+  const [preparation, setPreparation] = useState<
+    | { stage: DownloadPreparationStage }
+    | { stage: "ready"; version: string; minOs: string }
+    | null
   >(null);
 
   const filteredAccounts = useMemo(
@@ -41,6 +55,11 @@ export default function ProductDetail() {
   );
 
   const account = filteredAccounts.find((a) => a.email === selectedAccount);
+  const canUseDefaultAccount = defaultAccount?.configured === true;
+
+  useEffect(() => {
+    getDefaultAccountStatus().then(setDefaultAccount).catch(() => setDefaultAccount(null));
+  }, []);
 
   useEffect(() => {
     if (!stateApp && appId) {
@@ -94,11 +113,23 @@ export default function ProductDetail() {
   }
 
   async function handleDownload() {
-    if (!account || !app) return;
+    if ((!account && !canUseDefaultAccount) || !app) return;
     setLoadingAction("download");
+    setPreparation({ stage: "checking" });
     try {
-      await startDownload(account, app);
+      const task = await startDownload(account, app, undefined, {
+        onPreparationStage: (stage) => setPreparation({ stage }),
+      });
+      if (task) {
+        setPreparation({
+          stage: "ready",
+          version: task.software.version,
+          minOs: task.software.minimumOsVersion,
+        });
+        window.setTimeout(() => setPreparation(null), 8_000);
+      }
     } catch (e) {
+      setPreparation(null);
       toastDownloadError(account, app, e);
     } finally {
       setLoadingAction(null);
@@ -127,38 +158,44 @@ export default function ProductDetail() {
           </div>
         </div>
 
-        {accounts.length === 0 ? (
+        {accounts.length === 0 && !canUseDefaultAccount ? (
           <div className="alert" data-tone="warning">
             <Link to="/accounts/add" className="font-medium underline">
               {t("search.product.addAccountLink")}
             </Link>{" "}
             {t("search.product.addAccountPrompt")}
           </div>
-        ) : filteredAccounts.length === 0 ? (
+        ) : filteredAccounts.length === 0 && !canUseDefaultAccount ? (
           <div className="alert" data-tone="warning">
             {t("search.product.noAccountsForRegion")}
           </div>
         ) : (
           <div className="card card-pad space-y-4">
-            <div>
-              <label className="field-label">
-                {t("search.product.account")}
-              </label>
-              <select
-                value={selectedAccount}
-                onChange={(e) => setSelectedAccount(e.target.value)}
-                className="field-input field-select"
-                disabled={loadingAction !== null}
-              >
-                {filteredAccounts.map((a, index) => (
-                  <option key={a.email} value={a.email}>
-                    {getAccountOptionLabel(a, t, demoMode, index)}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {filteredAccounts.length > 0 ? (
+              <div>
+                <label className="field-label">
+                  {t("search.product.account")}
+                </label>
+                <select
+                  value={selectedAccount}
+                  onChange={(e) => setSelectedAccount(e.target.value)}
+                  className="field-input field-select"
+                  disabled={loadingAction !== null}
+                >
+                  {filteredAccounts.map((a, index) => (
+                    <option key={a.email} value={a.email}>
+                      {getAccountOptionLabel(a, t, demoMode, index)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="alert" data-tone="success">
+                已使用 iPhone 设备内默认 Apple ID：{defaultAccount?.emailMasked || "已配置账户"}
+              </div>
+            )}
             <div className="flex flex-wrap gap-3">
-              {(app.price === undefined || app.price === 0) && (
+              {filteredAccounts.length > 0 && (app.price === undefined || app.price === 0) && (
                 <button
                   onClick={handlePurchase}
                   disabled={loadingAction !== null}
@@ -186,6 +223,47 @@ export default function ProductDetail() {
                 {t("search.product.versionHistory")}
               </Link>
             </div>
+            {preparation && (
+              <div
+                className="alert flex items-start gap-3"
+                data-tone={preparation.stage === "ready" ? "success" : "warning"}
+                role="status"
+                aria-live="polite"
+              >
+                {preparation.stage !== "ready" && <Spinner />}
+                <div>
+                  <div className="font-semibold">
+                    {preparation.stage === "ready"
+                      ? t("search.product.compatibilityReady", {
+                          version: preparation.version,
+                          minOs: preparation.minOs,
+                        })
+                      : t("search.product.preparingDownload")}
+                  </div>
+                  {preparation.stage !== "ready" && (
+                    <>
+                      <div className="mt-1">
+                        {t(`search.product.${
+                          preparation.stage === "checking"
+                            ? "compatibilityChecking"
+                            : preparation.stage === "readingDescriptor"
+                              ? "descriptorReading"
+                              : preparation.stage === "selectingHistory"
+                                ? "historySelecting"
+                                : "compatibilityConfirming"
+                        }`)}
+                      </div>
+                      <div className="mt-1 text-[12px] opacity-75">
+                        {t("search.product.compatibilityContext", {
+                          version: app.version,
+                          minOs: app.minimumOsVersion,
+                        })}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

@@ -16,12 +16,19 @@
 
 ## iStoreOS Docker 部署
 
-要求 Node.js 22.5+。推荐直接使用仓库中的 Dockerfile：
+平台运行在 Docker Compose 容器中；iPhone 仅安装对应的 `wiki.qaq.unfaird` DEB。不要将平台部署到 iPhone，也不要把下载文件写入 iStoreOS 系统盘。
+
+### 1. 准备目录和配置
+
+以下命令在 iStoreOS 的终端执行。将 `/mnt/nvme0n1-4` 替换为实际的大盘挂载点：
 
 ```bash
-cd private-platform
+git clone https://github.com/Restless91/AssppJailbroken.git /opt/asspp
+cd /opt/asspp/private-platform
 cp config.example.json config.json
 cp docker-compose.istoreos.example.yml docker-compose.yml
+mkdir -p /mnt/nvme0n1-4/asspp-platform
+chown -R 1000:1000 /mnt/nvme0n1-4/asspp-platform
 ```
 
 生成主密钥：
@@ -30,34 +37,59 @@ cp docker-compose.istoreos.example.yml docker-compose.yml
 openssl rand -hex 32
 ```
 
-把结果填入 `docker-compose.yml` 的 `PLATFORM_MASTER_KEY`。主密钥一旦用于保存 Apple ID、COS 或设备 Token，就不能随意更换，否则已有密文无法解密。
+将该值写入 `docker-compose.yml` 的 `PLATFORM_MASTER_KEY`。主密钥用于加密 Apple ID、COS 密钥和设备访问密码；开始使用后不可随意更换。
 
-确保大盘目录存在并属于容器内的 Node 用户（UID 1000）：
+### 2. 配置平台
+
+编辑 `config.json`：
+
+- `publicBaseUrl`：用户访问的 HTTPS 地址，例如 `https://dump.dkapps.cn`；
+- `internalBaseUrl`：iPhone 访问平台的内网地址，例如 `http://192.168.100.1:8090`；
+- `devices[].baseUrl`：每台 iPhone 节点地址，例如 `http://192.168.100.122:8080`；
+- `storage.localDir`：保持为 `./data/artifacts`，它会映射到大盘；
+- `adminToken`：替换为一次性高强度初始化口令。
+
+不要把真实 Apple ID、COS 密钥、节点 Token 或 `config.json` 提交到 Git 仓库。
+
+### 3. 启动与验证
 
 ```bash
-mkdir -p /mnt/nvme0n1-4/asspp-platform
-chown -R 1000:1000 /mnt/nvme0n1-4/asspp-platform
 docker compose up -d --build
+docker compose ps
+curl http://127.0.0.1:8090/api/health
 ```
 
 局域网访问：
 
 ```text
-http://192.168.100.1:8090/
-http://192.168.100.1:8090/admin
+用户前端：http://iStoreOS_IP:8090/
+管理后台：http://iStoreOS_IP:8090/admin
 ```
 
-Cloudflare Tunnel 应指向：
+查看运行日志：
 
-```text
-http://127.0.0.1:8090
+```bash
+docker compose logs -f --tail=200
 ```
+
+更新平台：
+
+```bash
+cd /opt/asspp
+git pull --ff-only
+cd private-platform
+docker compose up -d --build
+```
+
+### 4. 公网访问
+
+Cloudflare Tunnel 或反向代理应转发到 `http://127.0.0.1:8090`。公网域名使用 HTTPS；iPhone 与 iStoreOS 保持局域网 HTTP 通信即可。
 
 公网地址为 `https://dump.dkapps.cn` 时，在后台“存储与 COS”中填写：
 
-- 公网基础地址：`https://dump.dkapps.cn`
-- iPhone 局域网取件地址：`http://192.168.100.1:8090`
-- 文件保留分钟：`1440`（24 小时）
+- 公网基础地址：`https://dump.dkapps.cn`；
+- iPhone 内网取件地址：`http://192.168.100.1:8090`；
+- 文件保留分钟：`1440`（24 小时）。
 
 ## 首次初始化
 

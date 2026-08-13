@@ -5,11 +5,23 @@ import { useDownloadsStore } from "../store/downloads";
 import {
   purchaseApp,
   startAppleDownload,
+  startDefaultAppleDownload,
 } from "../api/apple";
 import { apiGet } from "../api/client";
 import { getErrorMessage } from "../utils/error";
 import { getAccountContext } from "../utils/toast";
 import type { Account, Software } from "../types";
+
+export type DownloadPreparationStage =
+  | "checking"
+  | "readingDescriptor"
+  | "selectingHistory"
+  | "confirming";
+
+interface DownloadOptions {
+  forceExtensionDecryption?: boolean;
+  onPreparationStage?: (stage: DownloadPreparationStage) => void;
+}
 
 /**
  * Shared hook for download & purchase actions.
@@ -22,11 +34,14 @@ export function useDownloadAction() {
   const { t } = useTranslation();
 
   async function startDownload(
-    account: Account,
+    account: Account | null | undefined,
     app: Software,
     versionId?: string,
+    options?: DownloadOptions,
   ) {
-    const ctx = getAccountContext(account, t);
+    const ctx = account
+      ? getAccountContext(account, t)
+      : { userName: "iPhone 默认账户", appleId: "设备内账户" };
     const appName = app.name;
 
     try {
@@ -50,12 +65,44 @@ export function useDownloadAction() {
       // Settings fetch failed — backend will still enforce the limit
     }
 
-    const result = await startAppleDownload(
-      account,
-      app,
-      versionId,
-    );
-    await updateAccount(result.account);
+    options?.onPreparationStage?.("checking");
+    const stageTimers = [
+      window.setTimeout(
+        () => options?.onPreparationStage?.("readingDescriptor"),
+        700,
+      ),
+      window.setTimeout(
+        () => options?.onPreparationStage?.("selectingHistory"),
+        2_000,
+      ),
+      window.setTimeout(
+        () => options?.onPreparationStage?.("confirming"),
+        6_000,
+      ),
+    ];
+
+    let task;
+    try {
+      if (account) {
+        const result = await startAppleDownload(
+          account,
+          app,
+          versionId,
+          options?.forceExtensionDecryption,
+        );
+        await updateAccount(result.account);
+        task = result.task;
+      } else {
+        const result = await startDefaultAppleDownload(
+          app,
+          versionId,
+          options?.forceExtensionDecryption,
+        );
+        task = result.task;
+      }
+    } finally {
+      stageTimers.forEach(window.clearTimeout);
+    }
 
     fetchTasks();
 
@@ -64,6 +111,7 @@ export function useDownloadAction() {
       "info",
       t("toast.title.downloadStarted"),
     );
+    return task;
   }
 
   async function acquireLicense(account: Account, app: Software) {
@@ -80,8 +128,10 @@ export function useDownloadAction() {
     );
   }
 
-  function toastDownloadError(account: Account, app: Software, error: unknown) {
-    const ctx = getAccountContext(account, t);
+  function toastDownloadError(account: Account | null | undefined, app: Software, error: unknown) {
+    const ctx = account
+      ? getAccountContext(account, t)
+      : { userName: "iPhone 默认账户", appleId: "设备内账户" };
     addToast(
       t("toast.msgFailed", {
         appName: app.name,

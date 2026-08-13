@@ -26,7 +26,7 @@ export class AdminDatabase {
     this.db.exec('PRAGMA journal_mode = WAL;');
     this.db.exec('PRAGMA foreign_keys = ON;');
     this.db.exec('PRAGMA busy_timeout = 5000;');
-    this.masterKey = deriveMasterKey(process.env.PLATFORM_MASTER_KEY || '');
+    this.masterKey = deriveMasterKey(process.env.PLATFORM_MASTER_KEY || legacyConfig.adminToken || '');
     this.migrate();
     this.importLegacyConfig(legacyConfig);
   }

@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, readFile, writeFile, stat, statfs, unlink } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, stat, unlink } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { request as httpsRequest } from 'node:https';
@@ -18,11 +18,6 @@ import {
 } from './cos-signing.mjs';
 import { evaluateDeviceCompatibility } from './scheduler-policy.mjs';
 import { evaluateDeviceScheduling } from './device-scheduling-policy.mjs';
-import { JobJournal } from './job-journal.mjs';
-import { createBackupManager } from './backup-manager.mjs';
-import { admitJob, canDispatchJob, fairQueueOrder } from './scheduler-engine.mjs';
-import { createStorageLifecycle } from './storage-lifecycle.mjs';
-import { buildDeviceCapabilityProfile } from './device-capability-profile.mjs';
 import { verifyGatewaySignature, WechatGatewayClient } from './wechat-gateway.mjs';
 import {
   updateFromDeviceTask,
@@ -37,19 +32,11 @@ import {
 } from './apple-download-materials.mjs';
 import { extractErrorMessage, readErrorMessage } from './error-message.mjs';
 import { createOnlineDevicePool } from './device-pool.mjs';
-import { createHealthModel, createMetricsRegistry } from './observability.mjs';
-import { constantTimeEqual, createRateLimiter, readBoundedBody, requireHeaderToken, validateCredentialConfig, validateMutationOrigin } from './request-security.mjs';
-import { writeAtomicJson } from './atomic-json-store.mjs';
 
 const rootDir = new URL('.', import.meta.url).pathname;
 const configPath = process.env.PLATFORM_CONFIG || join(rootDir, 'config.json');
 const appsPath = process.env.PLATFORM_APPS || join(rootDir, 'apps.json');
 const statePath = process.env.PLATFORM_STATE || join(rootDir, 'data', 'state.json');
-
-validateCredentialConfig({
-  production: process.env.NODE_ENV === 'production',
-  masterKey: process.env.PLATFORM_MASTER_KEY
-});
 
 const config = await loadJson(configPath, join(rootDir, 'config.example.json'));
 const apps = await loadJson(appsPath, join(rootDir, 'apps.json'));
@@ -103,21 +90,8 @@ const adminSystem = createAdminSystem({
   getJobSummaries,
   getJobDetail,
   adminJobAction,
-  testStorage,
-  decorateDevice: (device) => ({
-    ...device,
-    capabilityProfile: buildDeviceCapabilityProfile(device, state.jobs)
-  })
+  testStorage
 });
-const jobJournal = new JobJournal(adminSystem.store.db);
-const backupManager = createBackupManager({
-  database: adminSystem.store.db,
-  databasePath: process.env.PLATFORM_DATABASE || join(rootDir, 'data', 'platform.sqlite'),
-  backupRoot: process.env.PLATFORM_BACKUP_DIR || join(rootDir, 'data', 'backups')
-});
-jobJournal.importLegacy(state.jobs);
-const journalJobs = jobJournal.list();
-if (journalJobs.length) state.jobs = journalJobs;
 const devicePool = createOnlineDevicePool({
   listDevices: () => adminSystem.schedulingDevices(),
   isUnavailable: isDeviceUnavailableError,
@@ -128,26 +102,6 @@ const devicePool = createOnlineDevicePool({
     });
   }
 });
-const metrics = createMetricsRegistry({ allowedLabels: ['method', 'result'] });
-const publicRateLimiter = createRateLimiter({ limit: 60, windowMs: 60_000 });
-const artifactDirectory = resolvePath(storageConfig().localDir || './data/artifacts');
-const storageLifecycle = createStorageLifecycle({ rootDir: artifactDirectory });
-const health = createHealthModel({
-  database: async () => {
-    adminSystem.store.listDevices();
-    return { ok: true };
-  },
-  storage: async () => {
-    const value = await statfs(resolvePath(storageConfig().localDir || './data/artifacts'));
-    const freeBytes = Number(value.bavail) * Number(value.bsize);
-    const minimumBytes = Math.max(64, Number(config.readinessMinimumFreeMB || 512)) * 1024 * 1024;
-    return { ok: freeBytes >= minimumBytes, freeBytes, minimumBytes };
-  },
-  devicePool: async () => {
-    const devices = adminSystem.publicDevices();
-    return { ok: true, configured: devices.length, online: devices.filter((device) => device.online).length };
-  }
-});
 const runningJobs = new Set();
 const topAppsCache = new Map();
 const historicalVersionsCache = new Map();
@@ -156,10 +110,9 @@ const wechatAccessTokenCache = { token: '', expiresAt: 0 };
 const activeJobStatuses = new Set(['running', 'downloading', 'decrypting', 'uploading']);
 const deviceReconnectGraceMs = Math.max(30, Number(config.deviceReconnectGraceSeconds || 180)) * 1000;
 const notificationRetries = new Set();
-const jobEventClients = new Set();
 
 await mkdir(join(rootDir, 'data'), { recursive: true });
-await mkdir(artifactDirectory, { recursive: true });
+await mkdir(resolvePath(storageConfig().localDir || './data/artifacts'), { recursive: true });
 await importLegacyAppleAccounts();
 
 for (const job of state.jobs) {
@@ -198,10 +151,6 @@ await saveState();
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
-    if (url.pathname.startsWith('/api/') && !validateMutationOrigin(req, {
-      allowedOrigins: [process.env.PUBLIC_BASE_URL, config.publicBaseUrl].filter(Boolean)
-    })) throw Object.assign(new Error('request origin is not allowed'), { status: 403 });
-    applyPublicRateLimit(req, url, res);
     if (url.pathname.startsWith('/api/')) {
       if (await adminSystem.handle(req, res, url)) return;
       await routeApi(req, res, url);
@@ -227,7 +176,6 @@ server.listen(serverPort, () => {
   adminSystem.startMonitor();
   scheduleQueuedJobs();
   cleanupExpiredArtifacts().catch(console.error);
-  scheduleDatabaseBackup().catch(console.error);
 });
 
 setInterval(() => {
@@ -239,39 +187,10 @@ setInterval(() => {
 }, 3_000).unref?.();
 
 setInterval(() => {
-  scheduleDatabaseBackup().catch(console.error);
-}, 24 * 60 * 60 * 1000).unref?.();
-
-async function scheduleDatabaseBackup() {
-  const result = await backupManager.create({ label: 'automatic' });
-  console.log(`[backup] verified database backup: ${result.directory}`);
-}
-
-setInterval(() => {
   retryFailedNotifications().catch(console.error);
 }, 60_000).unref?.();
 
 async function routeApi(req, res, url) {
-  if (url.pathname === '/api/health/live') {
-    json(res, 200, await health.live());
-    return;
-  }
-  if (url.pathname === '/api/health/ready') {
-    const result = await health.ready();
-    json(res, result.ok ? 200 : 503, result);
-    return;
-  }
-  if (url.pathname === '/api/metrics') {
-    requireAdmin(req, url);
-    const jobs = countJobs();
-    metrics.gauge('platform_jobs_queued', jobs.queued);
-    metrics.gauge('platform_jobs_active', jobs.active);
-    const devices = adminSystem.publicDevices();
-    metrics.gauge('platform_devices_online', devices.filter((device) => device.online).length);
-    res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
-    res.end(metrics.render());
-    return;
-  }
   if (url.pathname === '/api/health') {
     json(res, 200, { ok: true, devices: adminSystem.publicDevices().length, jobs: state.jobs.length });
     return;
@@ -771,11 +690,6 @@ async function routeApi(req, res, url) {
     json(res, 200, enrichJobs(jobs.slice().reverse()));
     return;
   }
-  if (url.pathname === '/api/jobs/events' && req.method === 'GET') {
-    const actor = requireActor(req, url);
-    startJobEventStream(req, res, actor);
-    return;
-  }
   if (url.pathname === '/api/jobs' && req.method === 'POST') {
     const actor = requireActor(req, url);
     const body = await readJsonBody(req);
@@ -852,15 +766,6 @@ async function createJob(body, actor = { isAdmin: true }) {
   if (requestedDeviceId) selectDevice(requestedDeviceId);
   const id = `${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 8)}`;
   const openid = actor.type === 'wechat' ? actor.openid : (body.openid || null);
-  const admission = admitJob(state.jobs, openid, adminSystem.schedulerSettings());
-  if (!admission.admitted) {
-    const error = new Error(admission.code === 'global_queue_limit'
-      ? '平台任务队列已满，请稍后重试'
-      : '当前用户排队任务已达到上限，请等待已有任务完成');
-    error.status = 429;
-    error.code = admission.code;
-    throw error;
-  }
   const creditCharged = Boolean(actor.type === 'wechat' && openid);
   if (creditCharged) {
     const user = adminSystem.store.wechatUser(openid);
@@ -882,9 +787,6 @@ async function createJob(body, actor = { isAdmin: true }) {
     workflowStage: 'queued',
     stageProgress: 0,
     forceExtensionDecryption: body.forceExtensionDecryption === true,
-    extensionDecryptionPolicy: ['main_only', 'compatible', 'strict'].includes(body.extensionDecryptionPolicy)
-      ? body.extensionDecryptionPolicy
-      : null,
     externalVersionId: body.externalVersionId || null,
     requestedVersion: body.externalVersionId ? String(body.requestedVersion || '').trim() || null : null,
     storefront,
@@ -977,16 +879,15 @@ async function adminJobAction({ id, action, body }) {
 function scheduleQueuedJobs() {
   const activeDevices = activeDeviceIds();
   const devices = adminSystem.schedulingDevices().filter((device) => device.online);
-  const queued = state.jobs.filter((job) => job.status === 'queued');
-  const scheduler = adminSystem.schedulerSettings();
-  for (const next of fairQueueOrder(queued)) {
-    if (!canDispatchJob(next, state.jobs, scheduler)) continue;
+  const queued = state.jobs
+    .filter((job) => job.status === 'queued')
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  for (const next of queued) {
     const device = selectCandidateDevice(next, devices, activeDevices);
     if (!device) {
       updateCompatibilityWait(next, devices, activeDevices);
       continue;
     }
-    if (!jobJournal.acquireDeviceLease(device.id, next.id)) continue;
     assignJobAttempt(next, device);
     startJob(next.id);
     activeDevices.add(device.id);
@@ -1013,8 +914,6 @@ function resumeDeviceTask(jobId) {
   monitorExistingDeviceTask(jobId)
     .catch((error) => failJob(jobId, error))
     .finally(() => {
-      const job = state.jobs.find((item) => item.id === jobId);
-      if (job?.deviceId) jobJournal.releaseDeviceLease(job.deviceId, jobId);
       runningJobs.delete(jobId);
       scheduleQueuedJobs();
     });
@@ -1074,7 +973,7 @@ async function monitorExistingDeviceTask(jobId) {
 }
 
 function activeDeviceIds() {
-  const active = jobJournal.activeDeviceIds();
+  const active = new Set();
   for (const jobId of runningJobs) {
     const job = state.jobs.find((item) => item.id === jobId);
     if (job?.deviceId) active.add(job.deviceId);
@@ -1100,9 +999,6 @@ function selectCandidateDevice(job, devices, activeDevices) {
     }
     const priority = devicePriority(a) - devicePriority(b);
     if (priority !== 0) return priority;
-    const profileScore = buildDeviceCapabilityProfile(b, state.jobs, job).score
-      - buildDeviceCapabilityProfile(a, state.jobs, job).score;
-    if (profileScore !== 0) return profileScore;
     if (Number(b.weight || 0) !== Number(a.weight || 0)) return Number(b.weight || 0) - Number(a.weight || 0);
     return String(a.id).localeCompare(String(b.id));
   });
@@ -1111,8 +1007,7 @@ function selectCandidateDevice(job, devices, activeDevices) {
 
 function deviceCanRunJob(device, job) {
   const effective = adminSystem.effectiveDeviceConfig(device);
-  return evaluateDeviceScheduling(device, job, effective).eligible === true
-    && buildDeviceCapabilityProfile(device, state.jobs, job).eligible;
+  return evaluateDeviceScheduling(device, job, effective).eligible === true;
 }
 
 function updateCompatibilityWait(job, devices, activeDevices) {
@@ -1121,19 +1016,12 @@ function updateCompatibilityWait(job, devices, activeDevices) {
   ).trim();
   const candidates = devices
     .filter((device) => !activeDevices.has(device.id))
-    .map((device) => {
-      const scheduling = evaluateDeviceScheduling(device, job, adminSystem.effectiveDeviceConfig(device));
-      const profile = buildDeviceCapabilityProfile(device, state.jobs, job);
-      return {
-        id: device.id,
-        name: device.name,
-        iosVersion: device.iosVersion || '',
-        ...scheduling,
-        eligible: scheduling.eligible && profile.eligible,
-        code: scheduling.eligible && !profile.eligible ? profile.reason : scheduling.code,
-        profile
-      };
-    });
+    .map((device) => ({
+      id: device.id,
+      name: device.name,
+      iosVersion: device.iosVersion || '',
+      ...evaluateDeviceScheduling(device, job, adminSystem.effectiveDeviceConfig(device))
+    }));
   const compatible = candidates.filter((device) => device.eligible);
   const next = {
     status: compatible.length ? 'waiting_for_device' : 'waiting_for_compatible_device',
@@ -1182,17 +1070,6 @@ function assignJobAttempt(job, device) {
   job.deviceId = device.id;
   job.assignedAt = now;
   job.attempts = Array.isArray(job.attempts) ? job.attempts : [];
-  const effective = adminSystem.effectiveDeviceConfig(device);
-  const configuredPolicy = ['main_only', 'compatible', 'strict'].includes(effective.extensionDecryptionPolicy)
-    ? effective.extensionDecryptionPolicy
-    : null;
-  const profile = buildDeviceCapabilityProfile(device, state.jobs, {
-    ...job,
-    extensionDecryptionPolicy: job.extensionDecryptionPolicy || configuredPolicy
-  });
-  job.deviceProfile = profile;
-  job.extensionDecryptionPolicy = job.extensionDecryptionPolicy || profile.extensionPolicy;
-  job.suggestedBatchSize = profile.batchSize;
   job.attempts.push({
     id: randomId(8),
     number: job.attempts.length + 1,
@@ -1202,9 +1079,7 @@ function assignJobAttempt(job, device) {
     startedAt: now,
     completedAt: null,
     errorCode: null,
-    error: null,
-    batchSize: profile.batchSize,
-    extensionPolicy: job.extensionDecryptionPolicy
+    error: null
   });
   job.logs = Array.isArray(job.logs) ? job.logs : [];
   const compatibility = evaluateDeviceCompatibility(device, job);
@@ -1218,7 +1093,6 @@ function assignJobAttempt(job, device) {
     job.logs.push(`兼容性检查通过：应用最低 iOS ${compatibility.minimumOsVersion}，设备为 iOS ${compatibility.deviceIosVersion}。`);
   }
   job.logs.push(`调度器选择设备：${device.name}（${device.priorityClass}，权重 ${device.weight}）。`);
-  job.logs.push(`设备画像：${profile.generation} / ${profile.provider}，批大小 ${profile.batchSize}，扩展策略 ${job.extensionDecryptionPolicy}，评分 ${profile.score}。`);
   touch(job);
 }
 
@@ -1230,9 +1104,6 @@ function finishCurrentAttempt(job, status, classified = null) {
   current.completedAt = new Date().toISOString();
   current.errorCode = classified?.code || null;
   current.error = classified?.message || null;
-  current.durationSeconds = Math.max(0, Math.round((Date.parse(current.completedAt) - Date.parse(current.startedAt)) / 1000));
-  current.completedMachOCount = Number(job.decryptCheckpoint?.completedMachOCount || job.verification?.verifiedMachOCount || 0);
-  current.totalMachOCount = Number(job.decryptCheckpoint?.totalMachOCount || job.verification?.totalMachOCount || 0);
 }
 
 function attemptsForDevice(job, deviceId) {
@@ -1319,7 +1190,7 @@ function buildQueueState() {
     }
   }
 
-  queued.splice(0, queued.length, ...fairQueueOrder(queued));
+  queued.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
 
   const onlineTotal = state.jobs.filter((job) => job.status === 'queued' || activeJobStatuses.has(job.status)).length;
   const availableDevices = [...devices.values()].filter((device) =>
@@ -1387,7 +1258,6 @@ function estimateJobSeconds() {
 async function runJob(jobId) {
   if (runningJobs.has(jobId)) return;
   runningJobs.add(jobId);
-  let routerStorageReservation = null;
   try {
     const job = getJob(jobId);
     if (!job.deviceId) throw new Error('调度器尚未分配设备');
@@ -1397,8 +1267,6 @@ async function runJob(jobId) {
     const forceExtensionDecryption = job.forceExtensionDecryption === undefined
       ? !Boolean(effectiveDeviceConfig.skipExtensions)
       : Boolean(job.forceExtensionDecryption);
-    const extensionDecryptionPolicy = job.extensionDecryptionPolicy
-      || (forceExtensionDecryption ? 'strict' : 'compatible');
     job.status = 'running';
     updateWorkflowProgress(job, 'preparing', 0);
     job.speed = '';
@@ -1424,8 +1292,7 @@ async function runJob(jobId) {
     const rawMaterials = await unfairdPost(device, '/api/downloads/apple/default/materials', {
       software,
       externalVersionId: job.externalVersionId,
-      forceExtensionDecryption,
-      extensionDecryptionPolicy
+      forceExtensionDecryption
     });
     const materials = normalizeAppleDownloadMaterials(rawMaterials, software);
     job.accountHash = materials.accountHash || job.accountHash || null;
@@ -1436,11 +1303,6 @@ async function runJob(jobId) {
       job.logs.push(`Apple 外部版本 ID：${materials.software.softwareVersionExternalIdentifier}`);
     }
     touch(job);
-
-    routerStorageReservation = await storageLifecycle.reserve({
-      artifactBytes: Number(materials.software?.fileSizeBytes || software.fileSizeBytes || 0),
-      workingCopies: 2
-    });
 
     job.status = 'downloading';
     updateWorkflowProgress(job, 'router_download', 0);
@@ -1471,9 +1333,7 @@ async function runJob(jobId) {
       sourceURL,
       sinfs: materials.sinfs || [],
       iTunesMetadata: materials.iTunesMetadata || null,
-      forceExtensionDecryption,
-      extensionDecryptionPolicy,
-      initialBatchSize: job.suggestedBatchSize || null
+      forceExtensionDecryption
     });
     const createdTask = created?.task || created;
     if (!createdTask?.id) {
@@ -1539,9 +1399,6 @@ async function runJob(jobId) {
       recordNotificationFailure(job, error);
     });
   } finally {
-    routerStorageReservation?.release();
-    const job = state.jobs.find((item) => item.id === jobId);
-    if (job?.deviceId) jobJournal.releaseDeviceLease(job.deviceId, jobId);
     runningJobs.delete(jobId);
   }
 }
@@ -1572,39 +1429,28 @@ function shouldExpireArtifact(job, now) {
 }
 
 async function expireArtifact(job) {
-  const failures = [];
   const device = job.deviceId
     ? adminSystem.store.device(job.deviceId, { includeSecrets: true })
     : null;
   if (device) {
     await deleteDevicePackage(device, job).catch((error) => {
       job.logs.push(`设备 IPA 清理失败：${error.message || String(error)}`);
-      failures.push({ provider: 'device', message: error.message || String(error) });
     });
   } else if (job.unfairdTaskId) {
     job.logs.push('原执行设备不存在，已跳过设备端 IPA 清理。');
   }
   await deleteLocalArtifact(job).catch((error) => {
     job.logs.push(`本地 IPA 清理失败：${error.message || String(error)}`);
-    failures.push({ provider: 'local', message: error.message || String(error) });
   });
   await deleteRemoteArtifact(job).catch((error) => {
     job.logs.push(`COS IPA 清理失败：${error.message || String(error)}`);
-    failures.push({ provider: 'cos', message: error.message || String(error) });
   });
-  if (failures.length) {
-    job.cleanupPending = { retryable: true, failures, lastAttemptAt: new Date().toISOString() };
-    job.logs.push('产物清理未完全成功，已保留引用并将在下一轮自动重试。');
-    touch(job, false);
-    return;
-  }
   job.status = 'expired';
   job.error = '下载链接已过期，请重新创建解密任务。';
   job.errorCode = 'artifact_expired';
   job.artifactUrl = null;
   job.artifactPath = null;
   job.downloadToken = null;
-  job.cleanupPending = null;
   job.expiredAt = new Date().toISOString();
   job.logs.push('下载链接已过期，已清理 IPA 文件；如需下载请重新砸壳。');
   touch(job, false);
@@ -1619,15 +1465,15 @@ async function deleteRemoteArtifact(job) {
 
 async function deleteDevicePackage(device, job) {
   if (!job.unfairdTaskId) return;
-  const url = `${device.baseUrl}/api/packages/${encodeURIComponent(job.unfairdTaskId)}?accountHash=${encodeURIComponent(accountHashForJob(job, device))}`;
-  const headers = deviceAccessHeaders(device);
+  const access = device.accessToken ? `&accessToken=${encodeURIComponent(device.accessToken)}` : '';
+  const url = `${device.baseUrl}/api/packages/${encodeURIComponent(job.unfairdTaskId)}?accountHash=${encodeURIComponent(accountHashForJob(job, device))}${access}`;
   try {
-    const response = await fetch(url, { method: 'DELETE', headers });
+    const response = await fetch(url, { method: 'DELETE' });
     if (!response.ok && response.status !== 404) {
       throw new Error(`设备删除 IPA 失败：${response.status} ${await response.text()}`);
     }
   } catch (error) {
-    await runCurlIfAvailable(['-sS', '-X', 'DELETE', ...curlDeviceHeaders(device), url], error);
+    await runCurlIfAvailable(['-sS', '-X', 'DELETE', url], error);
   }
 }
 
@@ -1721,9 +1567,10 @@ async function downloadPackage(device, task, job) {
   await mkdir(outputDir, { recursive: true });
   const safeName = sanitizeFilename(`${job.app.name}_${task.software?.version || 'latest'}_${job.id}.ipa`);
   const outputPath = join(outputDir, safeName);
-  const url = `${device.baseUrl}/api/packages/${task.id}/file?accountHash=${encodeURIComponent(accountHashForJob(job, device))}`;
+  const access = device.accessToken ? `&accessToken=${encodeURIComponent(device.accessToken)}` : '';
+  const url = `${device.baseUrl}/api/packages/${task.id}/file?accountHash=${encodeURIComponent(accountHashForJob(job, device))}${access}`;
   try {
-    const response = await fetch(url, { headers: deviceAccessHeaders(device) });
+    const response = await fetch(url);
     if (!response.ok || !response.body) {
       throw new Error(`下载 IPA 失败：${response.status} ${await response.text()}`);
     }
@@ -1733,7 +1580,7 @@ async function downloadPackage(device, task, job) {
       onProgress: createJobTransferReporter(job, 'retrieving', totalBytes)
     });
   } catch (error) {
-    await runCurlIfAvailable(['-fL', '--max-time', '0', ...curlDeviceHeaders(device), '-o', outputPath, url], error);
+    await runCurlIfAvailable(['-fL', '--max-time', '0', '-o', outputPath, url], error);
   }
   updateWorkflowProgress(job, 'retrieving', 100);
   job.speed = '';
@@ -1806,49 +1653,35 @@ async function publishArtifact(filePath, job) {
   job.speed = '';
   touch(job);
   if (storage.mode === 'cos' || storage.cos?.enabled) {
-    const staged = await storageLifecycle.stage({ sourcePath: filePath, artifactId: job.id });
     let key = cosObjectKey(filePath, job, 'cos');
     let upload;
     try {
       upload = await uploadFileToTencentCos(
-        staged.path,
+        filePath,
         key,
         'cos',
         createJobTransferReporter(job, 'uploading')
       );
     } catch (primaryError) {
-      if (!storage.fallbackCos?.enabled) {
-        await storageLifecycle.discard(staged);
-        throw primaryError;
-      }
+      if (!storage.fallbackCos?.enabled) throw primaryError;
       job.logs.push(`主 COS 上传失败，切换备用 COS：${primaryError.message || String(primaryError)}`);
       key = cosObjectKey(filePath, job, 'fallbackCos');
-      try {
-        upload = await uploadFileToTencentCos(
-          staged.path,
-          key,
-          'fallbackCos',
-          createJobTransferReporter(job, 'uploading')
-        );
-      } catch (fallbackError) {
-        await storageLifecycle.discard(staged);
-        throw fallbackError;
-      }
+      upload = await uploadFileToTencentCos(
+        filePath,
+        key,
+        'fallbackCos',
+        createJobTransferReporter(job, 'uploading')
+      );
     }
+    await unlink(filePath).catch((error) => {
+      if (error?.code !== 'ENOENT') throw error;
+    });
     job.remoteStorage = {
       provider: 'tencent-cos',
       configKey: upload.configKey,
       key,
-      url: upload.url,
-      size: staged.size,
-      sha256: staged.sha256,
-      publishedAt: new Date().toISOString()
+      url: upload.url
     };
-    job.storageReceipt = job.remoteStorage;
-    await saveState();
-    await Promise.all([filePath, staged.path].map((path) => unlink(path).catch((error) => {
-      if (error?.code !== 'ENOENT') throw error;
-    })));
     job.logs.push('已上传到腾讯云 COS，并删除 iStoreOS 本地成品 IPA。');
     updateWorkflowProgress(job, 'uploading', 100);
     job.speed = '';
@@ -1857,30 +1690,12 @@ async function publishArtifact(filePath, job) {
 
   const command = storage.cosUploadCommand || process.env.COS_UPLOAD_COMMAND || '';
   if (command.trim()) {
-    const staged = await storageLifecycle.stage({ sourcePath: filePath, artifactId: job.id });
     const key = `${job.app.bundleId}/${basename(filePath)}`;
-    try {
-      const url = await runUploadCommand(command, staged.path, key);
-      job.remoteStorage = {
-        provider: 'custom', key, url, size: staged.size, sha256: staged.sha256,
-        publishedAt: new Date().toISOString()
-      };
-      job.storageReceipt = job.remoteStorage;
-      await saveState();
-      await storageLifecycle.discard(staged);
-      await unlink(filePath).catch((error) => { if (error?.code !== 'ENOENT') throw error; });
-      return { url, path: null, remote: 'custom', key };
-    } catch (error) {
-      await storageLifecycle.discard(staged);
-      throw error;
-    }
+    const url = await runUploadCommand(command, filePath, key);
+    return { url, path: filePath };
   }
   const publicBase = storage.publicBaseUrl || config.publicBaseUrl || `http://127.0.0.1:${serverPort}`;
-  const staged = await storageLifecycle.stage({ sourcePath: filePath, artifactId: job.id });
-  const receipt = await storageLifecycle.publish(staged, { fileName: basename(filePath) });
-  job.storageReceipt = receipt;
-  await saveState();
-  return { url: `${publicBase}/files/${encodeURIComponent(receipt.fileName)}`, path: receipt.path, receipt };
+  return { url: `${publicBase}/files/${encodeURIComponent(basename(filePath))}`, path: filePath };
 }
 
 function artifactFileName(artifact) {
@@ -2309,10 +2124,12 @@ function runUploadCommand(command, filePath, key) {
 }
 
 async function unfairdGet(device, path) {
-  const url = `${device.baseUrl}${path}`;
+  const joiner = path.includes('?') ? '&' : '?';
+  const access = device.accessToken ? `${joiner}accessToken=${encodeURIComponent(device.accessToken)}` : '';
+  const url = `${device.baseUrl}${path}${access}`;
   let response;
   try {
-    response = await fetch(url, { headers: deviceAccessHeaders(device), signal: AbortSignal.timeout(15000) });
+    response = await fetch(url, { signal: AbortSignal.timeout(15000) });
   } catch (error) {
     throw deviceUnavailableError(error, device, path);
   }
@@ -2324,14 +2141,6 @@ async function unfairdGet(device, path) {
     throw error;
   }
   return response.json();
-}
-
-function deviceAccessHeaders(device) {
-  return device?.accessToken ? { 'X-Access-Token': device.accessToken } : {};
-}
-
-function curlDeviceHeaders(device) {
-  return device?.accessToken ? ['-H', `X-Access-Token: ${device.accessToken}`] : [];
 }
 
 async function getDeviceTaskWithReconnect(device, job, taskId) {
@@ -2918,11 +2727,12 @@ function pruneWebSessions(sessions) {
 
 function getActor(req, url) {
   const header = req.headers['x-admin-token'];
+  const query = url.searchParams.get('adminToken');
   const sessionAdmin = adminSystem.currentAdmin(req);
   if (sessionAdmin) {
     return { authenticated: true, type: 'admin', isAdmin: true, admin: sessionAdmin };
   }
-  if (config.adminToken && constantTimeEqual(header, config.adminToken)) {
+  if (config.adminToken && (header === config.adminToken || query === config.adminToken)) {
     return { authenticated: true, type: 'admin', isAdmin: true };
   }
   const cookies = parseCookies(req.headers.cookie || '');
@@ -3080,7 +2890,9 @@ function parseRangeHeader(header, size) {
 
 function requireAdmin(req, url) {
   if (!config.adminToken) return;
-  if (!requireHeaderToken(req, config.adminToken)) {
+  const header = req.headers['x-admin-token'];
+  const query = url.searchParams.get('adminToken');
+  if (header !== config.adminToken && query !== config.adminToken) {
     const error = new Error('unauthorized');
     error.status = 401;
     throw error;
@@ -3093,20 +2905,9 @@ async function readJsonBody(req) {
 }
 
 async function readRawBody(req) {
-  return readBoundedBody(req, {
-    maxBytes: Math.max(64 * 1024, Number(config.maxRequestBodyBytes || 2 * 1024 * 1024))
-  });
-}
-
-function applyPublicRateLimit(req, url, res) {
-  if (req.method !== 'POST' || !['/api/auth/wechat/start', '/api/cards/redeem', '/api/jobs'].includes(url.pathname)) return;
-  const address = String(req.headers['cf-connecting-ip'] || req.socket?.remoteAddress || 'unknown').slice(0, 100);
-  const result = publicRateLimiter.consume(`${address}:${url.pathname}`);
-  res.setHeader('X-RateLimit-Remaining', String(result.remaining));
-  if (!result.allowed) {
-    res.setHeader('Retry-After', String(Math.max(1, Math.ceil(result.retryAfterMs / 1000))));
-    throw Object.assign(new Error('too many requests'), { status: 429 });
-  }
+  let body = '';
+  for await (const chunk of req) body += chunk;
+  return body;
 }
 
 async function loadState() {
@@ -3121,17 +2922,14 @@ async function loadState() {
         ? loaded.notificationWindows
         : {}
     };
-  } catch (error) {
-    if (error?.code !== 'ENOENT') {
-      throw new Error(`unable to load platform state without data loss: ${error.message || String(error)}`);
-    }
+  } catch {
     return { jobs: [], users: [], loginSessions: [], webSessions: [], notificationWindows: {} };
   }
 }
 
 async function saveState() {
-  jobJournal.saveSnapshot(state.jobs);
-  await writeAtomicJson(statePath, state);
+  await mkdir(dirname(statePath), { recursive: true });
+  await writeFile(statePath, JSON.stringify(state, null, 2));
 }
 
 async function loadJson(path, fallbackPath) {
@@ -3181,40 +2979,7 @@ function getJob(id) {
 
 function touch(job, persist = true) {
   job.updatedAt = new Date().toISOString();
-  broadcastJobChange(job);
   if (persist) saveState().catch(console.error);
-}
-
-function startJobEventStream(req, res, actor) {
-  res.writeHead(200, {
-    'Content-Type': 'text/event-stream; charset=utf-8',
-    'Cache-Control': 'no-cache, no-transform',
-    Connection: 'keep-alive',
-    'X-Accel-Buffering': 'no'
-  });
-  res.write(`event: ready\ndata: ${JSON.stringify({ now: new Date().toISOString() })}\n\n`);
-  const client = { res, actor };
-  jobEventClients.add(client);
-  const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 20_000);
-  const maximumLifetime = setTimeout(() => res.end(), 60 * 60 * 1000);
-  req.on('close', () => {
-    clearInterval(heartbeat);
-    clearTimeout(maximumLifetime);
-    jobEventClients.delete(client);
-  });
-}
-
-function broadcastJobChange(job) {
-  if (!jobEventClients.size) return;
-  const payload = `event: job.changed\ndata: ${JSON.stringify({ id: job.id, updatedAt: job.updatedAt })}\n\n`;
-  for (const client of jobEventClients) {
-    if (!client.actor.isAdmin && client.actor.openid !== job.openid) continue;
-    try {
-      client.res.write(payload);
-    } catch {
-      jobEventClients.delete(client);
-    }
-  }
 }
 
 async function failJob(jobId, error) {
@@ -3365,17 +3130,8 @@ function classifyJobError(message, sourceCode = '') {
       retryScope: lower === 'fetch failed' ? 'same-device' : 'next-device'
     };
   }
-  if (code === 'memory_pressure' || lower.includes('code 137') || lower.includes('exit 137') || lower.includes('jetsam')) {
-    return {
-      status: 'failed',
-      code: 'memory_pressure',
-      logPrefix: '内存压力',
-      message: text,
-      retryable: true,
-      retryScope: 'next-device'
-    };
-  }
   if (
+    lower.includes('code 137') ||
     lower.includes('task_for_pid') ||
     lower.includes('permission setup failed') ||
     lower.includes('jbclient apis are unavailable') ||

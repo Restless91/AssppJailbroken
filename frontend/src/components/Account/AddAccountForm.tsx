@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import PageContainer from "../Layout/PageContainer";
@@ -9,6 +9,43 @@ import { authenticate, AuthenticationError } from "../../api/apple";
 import { getErrorMessage } from "../../utils/error";
 import { generateDeviceId } from "../../apple/config";
 
+const DEVICE_ID_STORAGE_PREFIX = "asspp.apple.deviceId.";
+const LAST_DEVICE_ID_STORAGE_KEY = "asspp.apple.lastDeviceId";
+
+function normalizeEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function storageKeyForEmail(email: string): string | null {
+  const normalized = normalizeEmail(email);
+  return normalized ? `${DEVICE_ID_STORAGE_PREFIX}${normalized}` : null;
+}
+
+function readStoredDeviceId(email?: string): string | null {
+  try {
+    const emailKey = email ? storageKeyForEmail(email) : null;
+    if (emailKey) {
+      const value = window.localStorage.getItem(emailKey);
+      if (value) return value;
+    }
+    return window.localStorage.getItem(LAST_DEVICE_ID_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredDeviceId(email: string, deviceId: string) {
+  try {
+    window.localStorage.setItem(LAST_DEVICE_ID_STORAGE_KEY, deviceId);
+    const emailKey = storageKeyForEmail(email);
+    if (emailKey) {
+      window.localStorage.setItem(emailKey, deviceId);
+    }
+  } catch {
+    // localStorage may be unavailable in private browsing; login can still proceed.
+  }
+}
+
 export default function AddAccountForm() {
   const navigate = useNavigate();
   const { addAccount } = useAccounts();
@@ -18,9 +55,19 @@ export default function AddAccountForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
-  const [deviceId, setDeviceId] = useState(() => generateDeviceId());
+  const [deviceId, setDeviceId] = useState(
+    () => readStoredDeviceId() ?? generateDeviceId(),
+  );
   const [needsCode, setNeedsCode] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (needsCode) return;
+    const stored = readStoredDeviceId(email);
+    if (stored && stored !== deviceId) {
+      setDeviceId(stored);
+    }
+  }, [deviceId, email, needsCode]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -29,6 +76,7 @@ export default function AddAccountForm() {
     try {
       const cleanedDeviceId = deviceId.replace(/[: ]/g, "");
       setDeviceId(cleanedDeviceId);
+      writeStoredDeviceId(email, cleanedDeviceId);
 
       const account = await authenticate(
         email,
@@ -116,7 +164,11 @@ export default function AddAccountForm() {
                 />
                 <button
                   type="button"
-                  onClick={() => setDeviceId(generateDeviceId())}
+                  onClick={() => {
+                    const nextDeviceId = generateDeviceId();
+                    setDeviceId(nextDeviceId);
+                    writeStoredDeviceId(email, nextDeviceId);
+                  }}
                   disabled={loading || needsCode}
                   className="btn btn-ghost btn-sm h-11 flex-shrink-0"
                 >

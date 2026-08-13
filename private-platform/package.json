@@ -1,11 +1,11 @@
 {
   "name": "asspp-private-platform",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "check": "for file in *.mjs public/*.js; do node --check \"$file\" || exit 1; done",
+    "check": "node --check server.mjs && node --check admin-system.mjs && node --check admin-db.mjs && node --check device-pool.mjs && node --check device-decrypt-readiness.mjs && node --check device-scheduling-policy.mjs && node --check apple-account-admin.mjs && node --check apple-account-lease.mjs && node --check apple-download-materials.mjs && node --check error-message.mjs && node --check cos-signing.mjs && node --check scheduler-policy.mjs && node --check wechat-gateway.mjs && node --check notification-window.mjs && node --check public/app.js && node --check public/admin.js",
     "test": "node --test test/*.test.mjs"
   },
   "engines": {

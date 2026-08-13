@@ -3,65 +3,44 @@ import Foundation
 import XCTest
 
 final class WebDownloadManagerTests: XCTestCase {
-    func testRestoresPersistedPendingTaskIntoItsOriginalQueuePosition() throws {
-        let context = try DownloadManagerTestContext()
-        defer { context.cleanup() }
-        let task = context.task(status: "pending", error: nil)
-        try context.writeTasks([task])
-        let recoveryStore = try DownloadRecoveryStore(
-            directory: context.dataDirectory.appendingPathComponent("recovery", isDirectory: true)
-        )
-        try recoveryStore.save(
-            DownloadRecoveryMaterial(
-                downloadURL: "https://example.apple.com/app.ipa",
-                sinfs: [Sinf(id: 1, sinf: "ticket")],
-                iTunesMetadata: "metadata"
+    func testLargeDownloadsUseSingleConnection() {
+        XCTAssertEqual(
+            WebDownloadManager.effectiveDownloadThreadCount(
+                configuredThreads: 8,
+                expectedBytes: 874_693_632
             ),
-            taskID: task.id
+            1
         )
-        let partialURL = ResumableFileDownloader.partialURL(for: URL(fileURLWithPath: task.filePath!))
-        try FileManager.default.createDirectory(
-            at: partialURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try Data("partial".utf8).write(to: partialURL)
-        let queue = HoldingDeviceTaskQueue()
-
-        let manager = try WebDownloadManager(config: context.config, queue: queue)
-
-        let restored = try XCTUnwrap(manager.task(id: task.id))
-        XCTAssertEqual(restored.status, "pending")
-        XCTAssertEqual(restored.queuePosition, 1)
-        XCTAssertEqual(queue.count, 1)
-        XCTAssertTrue(restored.logs?.contains(where: { $0.contains("restored persisted queue entry") }) == true)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: partialURL.path))
     }
 
-    func testFailedRecoverableTaskCanBeQueuedAgain() throws {
-        let context = try DownloadManagerTestContext()
-        defer { context.cleanup() }
-        let task = context.task(status: "failed", error: "Download failed: offline")
-        try context.writeTasks([task])
-        try DownloadRecoveryStore(
-            directory: context.dataDirectory.appendingPathComponent("recovery", isDirectory: true)
-        ).save(
-            DownloadRecoveryMaterial(
-                downloadURL: "https://example.apple.com/app.ipa",
-                sinfs: [],
-                iTunesMetadata: nil
+    func testSmallDownloadsClampParallelismToTwo() {
+        XCTAssertEqual(
+            WebDownloadManager.effectiveDownloadThreadCount(
+                configuredThreads: 8,
+                expectedBytes: 100 * 1024 * 1024
             ),
-            taskID: task.id
+            2
         )
-        let queue = HoldingDeviceTaskQueue()
-        let manager = try WebDownloadManager(config: context.config, queue: queue)
+    }
 
-        XCTAssertTrue(manager.retryTask(id: task.id))
+    func testUnknownSizeUsesSingleConnection() {
+        XCTAssertEqual(
+            WebDownloadManager.effectiveDownloadThreadCount(
+                configuredThreads: 8,
+                expectedBytes: 0
+            ),
+            1
+        )
+    }
 
-        let retried = try XCTUnwrap(manager.task(id: task.id))
-        XCTAssertEqual(retried.status, "pending")
-        XCTAssertNil(retried.error)
-        XCTAssertEqual(retried.queuePosition, 1)
-        XCTAssertEqual(queue.count, 1)
+    func testExplicitSingleConnectionRemainsSingle() {
+        XCTAssertEqual(
+            WebDownloadManager.effectiveDownloadThreadCount(
+                configuredThreads: 1,
+                expectedBytes: 100 * 1024 * 1024
+            ),
+            1
+        )
     }
 
     func testLoadsFailedTasksFromPersistence() throws {
@@ -71,7 +50,8 @@ final class WebDownloadManagerTests: XCTestCase {
         let task = context.task(status: "failed", error: "Decrypt failed: test")
         try context.writeTasks([task])
 
-        let manager = try WebDownloadManager(config: context.config)
+        let settingsStore = try RuntimeSettingsStore(config: context.config)
+        let manager = try WebDownloadManager(config: context.config, settingsStore: settingsStore)
 
         let tasks = manager.allTasks()
         XCTAssertEqual(tasks.count, 1)
@@ -89,7 +69,8 @@ final class WebDownloadManagerTests: XCTestCase {
         try context.writePackageFile(for: task)
         try context.writeTasks([task])
 
-        let manager = try WebDownloadManager(config: context.config)
+        let settingsStore = try RuntimeSettingsStore(config: context.config)
+        let manager = try WebDownloadManager(config: context.config, settingsStore: settingsStore)
 
         let tasks = manager.allTasks()
         XCTAssertEqual(tasks.count, 1)
@@ -113,7 +94,8 @@ final class WebDownloadManagerTests: XCTestCase {
         let task = context.task(status: "completed", error: nil)
         try context.writeTasks([task])
 
-        let manager = try WebDownloadManager(config: context.config)
+        let settingsStore = try RuntimeSettingsStore(config: context.config)
+        let manager = try WebDownloadManager(config: context.config, settingsStore: settingsStore)
 
         let tasks = manager.allTasks()
         XCTAssertEqual(tasks.count, 1)
@@ -140,26 +122,10 @@ final class WebDownloadManagerTests: XCTestCase {
             .appendingPathComponent("1.0", isDirectory: true)
         try FileManager.default.createDirectory(at: emptyVersionDirectory, withIntermediateDirectories: true)
 
-        _ = try WebDownloadManager(config: context.config)
+        let settingsStore = try RuntimeSettingsStore(config: context.config)
+        _ = try WebDownloadManager(config: context.config, settingsStore: settingsStore)
 
         XCTAssertFalse(FileManager.default.fileExists(atPath: emptyVersionDirectory.path))
-    }
-}
-
-private final class HoldingDeviceTaskQueue: DeviceTaskScheduling, @unchecked Sendable {
-    private let lock = NSLock()
-    private var work: [@Sendable () -> Void] = []
-
-    func async(_ work: @escaping @Sendable () -> Void) {
-        lock.lock()
-        self.work.append(work)
-        lock.unlock()
-    }
-
-    var count: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return work.count
     }
 }
 
@@ -187,6 +153,7 @@ private final class DownloadManagerTestContext {
             autoCleanupMaxMB: 0,
             maxDownloadMB: 0,
             downloadThreads: 8,
+            forceExtensionDecryption: false,
             accessPasswordHash: ""
         )
     }

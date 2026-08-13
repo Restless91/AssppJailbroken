@@ -44,14 +44,18 @@
       "viewDownloads": "View Downloads",
       "viewDownloadsDesc": "Check download progress and manage packages."
     },
-    "recommendations": {
-      "title": "App Store Picks",
-      "subtitle": "Top free apps in {{country}}",
-      "more": "Find more",
-      "failed": "App Store recommendations are temporarily unavailable.",
-      "retry": "Try again",
-      "empty": "No recommendations are available for this region.",
-      "open": "Rank {{rank}}, view {{name}}"
+    "search": {
+      "title": "Quick Search",
+      "subtitle": "Enter an app name or Bundle ID and jump to search results."
+    },
+    "popular": {
+      "title": "Top Apps",
+      "subtitle": "App Store {{country}} free ranking with app details filled in automatically.",
+      "searchMore": "More Search",
+      "loading": "Loading App Store ranking...",
+      "empty": "Ranking unavailable",
+      "emptyDesc": "Try again later, or use the search box above to find an app directly.",
+      "loadFailed": "Failed to load ranking"
     }
   },
   "search": {
@@ -73,6 +77,13 @@
       "account": "Account",
       "getLicense": "Get License",
       "processing": "Processing...",
+      "preparingDownload": "Preparing download",
+      "compatibilityChecking": "Checking the selected version against this device…",
+      "descriptorReading": "Reading the minimum OS requirement from the app descriptor…",
+      "historySelecting": "This build may be incompatible; checking historical versions…",
+      "compatibilityConfirming": "Confirming the newest compatible version…",
+      "compatibilityReady": "Selected v{{version}} (minimum iOS {{minOs}}). The download task is ready.",
+      "compatibilityContext": "Selected v{{version}} · minimum iOS {{minOs}}",
       "download": "Download",
       "versionHistory": "Version History",
       "details": "Details",
@@ -100,16 +111,6 @@
       "loadDetails": "Load details",
       "download": "Download",
       "downloading": "Downloading..."
-      ,"source": "History source"
-      ,"currentSource": "Current source: {{provider}}"
-      ,"loaded": "Loaded {{count}} versions from {{provider}}."
-      ,"cached": "Loaded {{count}} cached versions from {{provider}}."
-      ,"appleLoaded": "Loaded {{count}} version IDs from the Apple account."
-      ,"partialFailure": "Some sources were unavailable; other sources were tried automatically"
-      ,"refresh": "Force refresh"
-      ,"manualId": "Enter version ID manually"
-      ,"versionId": "Version ID"
-      ,"accountRequired": "An Apple ID for this region is required to download historical versions"
     }
   },
   "accounts": {
@@ -126,10 +127,10 @@
       "password": "Password",
       "deviceId": "Device Identifier",
       "randomize": "Randomize",
-      "deviceIdHelp": "Generated randomly. Each account must use a unique identifier.",
+      "deviceIdHelp": "Each account must keep one fixed unique identifier. Avoid randomizing it repeatedly, or Apple may not push a verification prompt.",
       "code": "2FA Verification Code",
       "codePlaceholder": "000000",
-      "codeHelp": "Enter the verification code from your trusted device.",
+      "codeHelp": "Enter the 6-digit code from your trusted device. If no prompt appears, open Settings > your name > Sign-In & Security > Two-Factor Authentication > Get Verification Code on a trusted device.",
       "signIn": "Sign In",
       "verify": "Verify",
       "cancel": "Cancel",
@@ -170,7 +171,6 @@
     "emptyFilterDesc": "No download records match this status.",
     "searchApps": "Search for apps to download",
     "deleteConfirm": "Delete this download?",
-    "queuePosition": "Queued · position {{position}}",
     "checkUpdates": "Check Updates",
     "checkingApp": "Checking: ",
     "checkingUpdates": "Checking...",
@@ -190,18 +190,6 @@
     "item": {
       "viewPackage": "View Package"
     },
-    "verification": {
-      "title": "Decryption Verification",
-      "result": "Mach-O verification",
-      "machO": "Verified {{verified}}/{{total}} Mach-O files",
-      "errorCode": "Error code"
-    },
-    "checkpoint": {
-      "title": "Recoverable decryption progress",
-      "progress": "{{completed}}/{{total}} Mach-O files",
-      "batch": "Batch size {{size}}",
-      "attempt": "Attempt {{count}}"
-    },
     "add": {
       "title": "New Download",
       "emptyTitle": "Ready to Create",
@@ -219,9 +207,28 @@
       "latest": "Latest",
       "getLicense": "Get License",
       "selectVersion": "Select Version",
+      "forceExtensions": "App extensions",
+      "forceExtensionsHelp": "Off by default for stability. When enabled, the main executable, frameworks, and app extensions are decrypted; failures are still skipped, but large apps may use more resources.",
       "download": "Download",
       "processing": "Processing...",
       "noAccountsForRegion": "No accounts found for this region"
+    },
+    "decrypt": {
+      "title": "Decryption Result",
+      "main": "Main executable",
+      "frameworks": "Frameworks",
+      "extensions": "App extensions",
+      "decrypted": "Decrypted",
+      "notReported": "Not reported",
+      "decryptedCount": "{{count}} decrypted",
+      "skippedCount": "{{count}} skipped",
+      "mainOk": "Main decrypted",
+      "frameworksOk": "{{count}} frameworks decrypted",
+      "frameworksSkipped": "{{count}} frameworks skipped",
+      "extensionsOk": "{{count}} app extensions decrypted",
+      "extensionsSkipped": "{{count}} app extensions skipped",
+      "fullPermission": "Full-permission dump",
+      "partialPermission": "Partial-permission dump"
     },
     "package": {
       "title": "Package Details",
@@ -239,7 +246,6 @@
       "downloadSimulatorIpa": "Download Simulator IPA",
       "pause": "Pause",
       "resume": "Resume",
-      "retry": "Queue again",
       "delete": "Delete",
       "checkUpdate": "Check Update",
       "checkingUpdate": "Checking...",
@@ -281,7 +287,38 @@
       "configuration": "Configuration",
       "enabled": "Enabled",
       "disabled": "Disabled",
-      "notSet": "Not set (auto-detect)"
+      "notSet": "Not set (auto-detect)",
+      "publicBaseHelp": "Used for install and download links. Leave empty to auto-detect.",
+      "zeroDisabled": "Set 0 to disable.",
+      "downloadThreadsHelp": "Range: 1-32. Lower concurrency is usually more stable on iPhone.",
+      "forceExtensions": "App extensions",
+      "forceExtensionsHelp": "Off by default for stability. When enabled, new tasks try to decrypt the main executable, frameworks, and app extensions; launch or process-access failures are still skipped.",
+      "httpsRedirectHelp": "Keep enabled for LAN HTTP usage; adjust carefully for public HTTPS deployments.",
+      "save": "Save Settings",
+      "saving": "Saving...",
+      "saved": "Server settings saved",
+      "saveFailed": "Failed to save server settings",
+      "reload": "Reload"
+    },
+    "tokens": {
+      "title": "Decrypt Tokens",
+      "description": "Generate user access tokens. Each token can create 5 successful decrypt tasks by default and expires after its uses are consumed.",
+      "namePlaceholder": "Token name (optional)",
+      "generate": "Generate Token",
+      "generating": "Generating...",
+      "generated": "Token generated",
+      "generateFailed": "Failed to generate token",
+      "generatedOnce": "Copy it now. The full token is shown only once.",
+      "copy": "Copy",
+      "copied": "Token copied",
+      "empty": "No tokens yet.",
+      "remaining": "{{remaining}} / {{total}} uses left",
+      "active": "Active",
+      "inactive": "Inactive",
+      "revoke": "Revoke",
+      "revokeConfirm": "Revoke this token?",
+      "revoked": "Token revoked",
+      "revokeFailed": "Failed to revoke token"
     },
     "data": {
       "title": "Data",
@@ -295,7 +332,6 @@
       "passwordMismatch": "Passwords do not match.",
       "incorrectPassword": "Incorrect password or corrupted data.",
       "exportSuccess": "Accounts exported successfully.",
-      "exportFailed": "Unable to export accounts. Please try again.",
       "importSuccess": "Accounts imported successfully.",
       "cancel": "Cancel",
       "confirmBtn": "Confirm",

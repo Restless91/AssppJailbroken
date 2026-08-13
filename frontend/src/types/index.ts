@@ -1,5 +1,6 @@
 export interface Software {
   id: number;
+  rank?: number;
   bundleID: string;
   name: string;
   version: string;
@@ -87,6 +88,8 @@ export interface DownloadTask {
     | "insufficient_storage"
     | "unknown";
   logs?: string[];
+  decryptEvents?: DecryptEvent[];
+  forceExtensionDecryption?: boolean;
   hasFile?: boolean;
   verification?: {
     scannedMachOCount: number;
@@ -108,6 +111,19 @@ export interface DownloadTask {
     updatedAt: string;
   };
   createdAt: string;
+}
+
+export interface DecryptEvent {
+  kind: "main" | "framework" | "extension" | "report" | string;
+  status: "decrypted" | "skipped" | "info" | "warning" | "failed" | string;
+ path?: string;
+  reportTotal?: number;
+  reportDecrypted?: number;
+  reportRemaining?: number;
+  reportMainRemaining?: number;
+  reportFrameworkRemaining?: number;
+  reportExtensionRemaining?: number;
+ message: string;
 }
 
 export interface PackageInfo {

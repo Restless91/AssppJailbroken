@@ -1,0 +1,1 @@
+import{j as e}from"./index-CDtc9byP.js";function i({open:r,onClose:s,title:a,children:l}){return r?e.jsx("div",{className:"modal",onClick:t=>{t.target===t.currentTarget&&s()},children:e.jsxs("div",{className:"modal-panel",children:[e.jsx("h3",{className:"mb-4 text-[16px] font-semibold text-ink",children:a}),l]})}):null}export{i as M};

@@ -24,3 +24,14 @@ export async function lookupApp(
   const params = new URLSearchParams({ [key]: appIdOrBundleId, country });
   return apiGet<Software | null>(`/api/lookup?${params}`);
 }
+
+export async function topApps(
+  country: string,
+  limit: number = 24,
+): Promise<Software[]> {
+  const params = new URLSearchParams({
+    country,
+    limit: String(limit),
+  });
+  return apiGet<Software[]>(`/api/top-apps?${params}`);
+}

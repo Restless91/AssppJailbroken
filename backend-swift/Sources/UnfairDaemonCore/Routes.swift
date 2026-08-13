@@ -17,20 +17,24 @@ struct HealthResponse: Content {
 func routes(
     _ app: Application,
     config: WebConfig? = nil,
+    settingsStore: RuntimeSettingsStore? = nil,
     decryptService: DecryptService = DecryptService()
 ) throws {
-    app.get("health") { _ in
+    app.get("health") { _ -> HealthResponse in
         HealthResponse.current
     }
 
-    if let config {
+    if let config, let settingsStore {
         app.get("api", "node", "info") { req -> NodeInfoResponse in
-            try requireAccess(req, config: config)
+            try requireAdminAccess(req, config: config, settingsStore: settingsStore)
             return NodeInfoResponse.current(config: config)
         }
     }
 
     app.on(.POST, "api", "v1", "decrypt", body: .stream) { req -> EventLoopFuture<DecryptQueueResponse> in
+        if let config = config {
+            _ = try requireAccess(req, config: config, settingsStore: settingsStore)
+        }
         if let contentLength = req.headers.first(name: .contentLength).flatMap(Int64.init),
            contentLength > DecryptService.maxUploadBytes {
             throw Abort(.payloadTooLarge, reason: "upload limit is 8GB")

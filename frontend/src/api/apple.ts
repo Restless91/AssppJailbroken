@@ -1,4 +1,4 @@
-import { apiPost, ApiError } from './client';
+import { apiGet, apiPost, ApiError } from './client';
 import { accountHash } from '../utils/account';
 import type {
   Account,
@@ -53,6 +53,20 @@ interface AppleDownloadResponse {
   task: DownloadTask;
 }
 
+export interface DefaultAccountStatus {
+  configured: boolean;
+  emailMasked?: string;
+  store?: string;
+  pod?: string;
+  accountHash?: string;
+  updatedAt?: string;
+}
+
+interface DefaultAppleDownloadResponse {
+  task: DownloadTask;
+  accountHash: string;
+}
+
 export async function authenticate(
   email: string,
   password: string,
@@ -100,7 +114,7 @@ export async function listVersions(
 
 export async function listHistoricalVersions(
   software: Software,
-  provider = 'auto',
+  provider: string = 'auto',
 ): Promise<HistoricalVersionListResponse> {
   return apiPost<HistoricalVersionListResponse>('/api/apple/historical-versions', {
     software,
@@ -124,12 +138,30 @@ export async function startAppleDownload(
   account: Account,
   software: Software,
   externalVersionId?: string,
+  forceExtensionDecryption?: boolean,
 ): Promise<AppleDownloadResponse> {
   const response = await apiPost<AppleDownloadResponse>('/api/downloads/apple', {
     account,
     software,
     accountHash: await accountHash(account),
     externalVersionId,
+    forceExtensionDecryption,
   });
   return response;
+}
+
+export async function getDefaultAccountStatus(): Promise<DefaultAccountStatus> {
+  return apiGet<DefaultAccountStatus>('/api/account/default/status');
+}
+
+export async function startDefaultAppleDownload(
+  software: Software,
+  externalVersionId?: string,
+  forceExtensionDecryption?: boolean,
+): Promise<DefaultAppleDownloadResponse> {
+  return apiPost<DefaultAppleDownloadResponse>('/api/downloads/apple/default', {
+    software,
+    externalVersionId,
+    forceExtensionDecryption,
+  });
 }

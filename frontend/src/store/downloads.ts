@@ -13,6 +13,7 @@ interface DownloadsState {
     accountHash: string;
     downloadURL: string;
     sinfs: Sinf[];
+    forceExtensionDecryption?: boolean;
   }) => Promise<void>;
   pauseDownload: (id: string) => Promise<void>;
   resumeDownload: (id: string) => Promise<void>;

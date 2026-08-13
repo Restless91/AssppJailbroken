@@ -44,14 +44,18 @@
       "viewDownloads": "查看下载",
       "viewDownloadsDesc": "查看下载进度并管理安装包。"
     },
-    "recommendations": {
-      "title": "App Store 推荐",
-      "subtitle": "{{country}} 地区免费应用排行",
-      "more": "搜索更多",
-      "failed": "暂时无法加载 App Store 推荐。",
-      "retry": "重新加载",
-      "empty": "当前地区暂无推荐应用。",
-      "open": "第 {{rank}} 名，查看 {{name}}"
+    "search": {
+      "title": "快速搜索",
+      "subtitle": "输入应用名称或 Bundle ID，跳转到搜索结果页。"
+    },
+    "popular": {
+      "title": "热门应用榜",
+      "subtitle": "App Store {{country}} 免费榜，自动补齐应用详情。",
+      "searchMore": "更多搜索",
+      "loading": "正在读取 App Store 热门应用榜...",
+      "empty": "排行榜暂时不可用",
+      "emptyDesc": "请稍后重试，或直接使用上方搜索框查找应用。",
+      "loadFailed": "排行榜加载失败"
     }
   },
   "search": {
@@ -73,6 +77,13 @@
       "account": "账号",
       "getLicense": "获取许可证",
       "processing": "处理中...",
+      "preparingDownload": "正在准备下载",
+      "compatibilityChecking": "正在检查所选版本与当前设备的兼容性…",
+      "descriptorReading": "正在读取 App 描述文件中的最低系统版本…",
+      "historySelecting": "当前版本可能不兼容，正在筛选历史版本…",
+      "compatibilityConfirming": "正在确认最新可用的兼容版本，请稍候…",
+      "compatibilityReady": "已选择 v{{version}}（最低 iOS {{minOs}}），下载任务已创建。",
+      "compatibilityContext": "所选版本 v{{version}} · 最低 iOS {{minOs}}",
       "download": "下载",
       "versionHistory": "历史版本",
       "details": "详细信息",
@@ -100,16 +111,6 @@
       "loadDetails": "加载详情",
       "download": "下载",
       "downloading": "下载中..."
-      ,"source": "历史版本来源"
-      ,"currentSource": "当前来源：{{provider}}"
-      ,"loaded": "已加载 {{count}} 个版本，来源 {{provider}}。"
-      ,"cached": "已从缓存加载 {{count}} 个版本，来源 {{provider}}。"
-      ,"appleLoaded": "已从 Apple 账号加载 {{count}} 个版本 ID。"
-      ,"partialFailure": "部分来源不可用，已自动尝试其他来源"
-      ,"refresh": "强制刷新"
-      ,"manualId": "手动输入版本 ID"
-      ,"versionId": "版本 ID"
-      ,"accountRequired": "下载历史版本需要先配置当前地区的 Apple ID 账号"
     }
   },
   "accounts": {
@@ -126,10 +127,10 @@
       "password": "密码",
       "deviceId": "设备标识符",
       "randomize": "随机生成",
-      "deviceIdHelp": "随机生成。每个账号必须使用唯一的标识符。",
+      "deviceIdHelp": "每个账号必须使用固定且唯一的标识符。请勿频繁随机生成，否则 Apple 可能不会推送验证码。",
       "code": "双重认证代码",
       "codePlaceholder": "000000",
-      "codeHelp": "输入来自您受信任设备的验证码。",
+      "codeHelp": "输入受信任设备上的 6 位验证码。如果没有弹窗，请在受信任设备打开「设置 > 你的姓名 > 登录与安全性 > 双重认证 > 获取验证码」手动获取。",
       "signIn": "登录",
       "verify": "验证",
       "cancel": "取消",
@@ -170,7 +171,6 @@
     "emptyFilterDesc": "没有符合该状态的下载记录。",
     "searchApps": "搜索要下载的应用",
     "deleteConfirm": "删除此下载？",
-    "queuePosition": "排队中，第 {{position}} 位",
     "checkUpdates": "一键检查更新",
     "checkingApp": "当前正在检查：",
     "checkingUpdates": "检查中...",
@@ -190,18 +190,6 @@
     "item": {
       "viewPackage": "查看安装包"
     },
-    "verification": {
-      "title": "砸壳校验",
-      "result": "Mach-O 校验",
-      "machO": "已验证 {{verified}}/{{total}} 个 Mach-O",
-      "errorCode": "错误代码"
-    },
-    "checkpoint": {
-      "title": "可恢复砸壳进度",
-      "progress": "{{completed}}/{{total}} 个 Mach-O",
-      "batch": "批次大小 {{size}}",
-      "attempt": "第 {{count}} 次尝试"
-    },
     "add": {
       "title": "新建下载",
       "emptyTitle": "准备新建",
@@ -219,9 +207,28 @@
       "latest": "最新",
       "getLicense": "获取许可证",
       "selectVersion": "选择版本",
+      "forceExtensions": "应用扩展",
+      "forceExtensionsHelp": "默认关闭以提高稳定性。开启后会尝试解密主程序、Framework 和应用扩展；失败仍会跳过，但大应用可能更耗资源。",
       "download": "下载",
       "processing": "处理中...",
       "noAccountsForRegion": "未找到该地区账号"
+    },
+    "decrypt": {
+      "title": "砸壳结果",
+      "main": "主程序",
+      "frameworks": "Framework",
+      "extensions": "应用扩展",
+      "decrypted": "已解密",
+      "notReported": "暂无报告",
+      "decryptedCount": "已解密 {{count}} 个",
+      "skippedCount": "已跳过 {{count}} 个",
+      "mainOk": "主程序已解密",
+      "frameworksOk": "Framework 已解密 {{count}}",
+      "frameworksSkipped": "Framework 已跳过 {{count}}",
+      "extensionsOk": "应用扩展已解密 {{count}}",
+      "extensionsSkipped": "应用扩展已跳过 {{count}}",
+      "fullPermission": "全权限砸壳",
+      "partialPermission": "部分权限砸壳"
     },
     "package": {
       "title": "安装包详情",
@@ -239,7 +246,6 @@
       "downloadSimulatorIpa": "下载模拟器用 IPA",
       "pause": "暂停",
       "resume": "恢复",
-      "retry": "重新排队",
       "delete": "删除",
       "checkUpdate": "检查更新",
       "checkingUpdate": "检查中...",
@@ -281,7 +287,38 @@
       "configuration": "服务器配置",
       "enabled": "已启用",
       "disabled": "已禁用",
-      "notSet": "未设置（自动检测）"
+      "notSet": "未设置（自动检测）",
+      "publicBaseHelp": "用于生成安装链接和下载链接。留空时由服务器自动检测。",
+      "zeroDisabled": "填 0 表示禁用。",
+      "downloadThreadsHelp": "范围 1-32。建议手机上保持较低并发以提高稳定性。",
+      "forceExtensions": "应用扩展",
+      "forceExtensionsHelp": "默认关闭以提高稳定性。开启后，新建任务会尝试解密主程序、Framework 和应用扩展；无法启动或取得进程权限时仍会跳过。",
+      "httpsRedirectHelp": "局域网 HTTP 使用时可保持开启；公网 HTTPS 部署时请谨慎调整。",
+      "save": "保存配置",
+      "saving": "保存中...",
+      "saved": "服务器配置已保存",
+      "saveFailed": "服务器配置保存失败",
+      "reload": "重新加载"
+    },
+    "tokens": {
+      "title": "砸壳 Token",
+      "description": "生成给用户使用的访问 Token。默认每个 Token 可成功创建 5 次砸壳任务，用完后自动失效。",
+      "namePlaceholder": "Token 名称（可选）",
+      "generate": "生成 Token",
+      "generating": "生成中...",
+      "generated": "Token 已生成",
+      "generateFailed": "Token 生成失败",
+      "generatedOnce": "请立即复制保存，完整 Token 只显示这一次。",
+      "copy": "复制",
+      "copied": "Token 已复制",
+      "empty": "暂无 Token。",
+      "remaining": "剩余 {{remaining}} / {{total}} 次",
+      "active": "有效",
+      "inactive": "已失效",
+      "revoke": "撤销",
+      "revokeConfirm": "确定撤销这个 Token 吗？",
+      "revoked": "Token 已撤销",
+      "revokeFailed": "Token 撤销失败"
     },
     "data": {
       "title": "数据",
@@ -295,7 +332,6 @@
       "passwordMismatch": "两次输入的密码不一致。",
       "incorrectPassword": "密码错误或数据已损坏。",
       "exportSuccess": "账号导出成功。",
-      "exportFailed": "账号导出失败，请重试。",
       "importSuccess": "账号导入成功。",
       "cancel": "取消",
       "confirmBtn": "确认",

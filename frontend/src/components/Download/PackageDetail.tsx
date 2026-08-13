@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import { QRCodeSVG } from "qrcode.react";
@@ -8,13 +8,13 @@ import Badge from "../common/Badge";
 import ProgressBar from "../common/ProgressBar";
 import Modal from "../common/Modal";
 import DownloadLog from "./DownloadLog";
-import VerificationSummary from "./VerificationSummary";
+import DecryptSummary from "./DecryptSummary";
 import { useDownloads } from "../../hooks/useDownloads";
 import { useAccounts } from "../../hooks/useAccounts";
 import { useDownloadAction } from "../../hooks/useDownloadAction";
 import { useSettingsStore } from "../../store/settings";
 import { useToastStore } from "../../store/toast";
-import { getInstallInfo } from "../../api/install";
+import { getInstallInfo, type InstallInfo } from "../../api/install";
 import { getAccessToken } from "../Auth/PasswordGate";
 import { listVersions } from "../../api/apple";
 import { lookupApp } from "../../api/search";
@@ -67,11 +67,15 @@ export default function PackageDetail() {
     task.status === "downloading" ||
     task.status === "injecting" ||
     task.status === "decrypting";
-  const canPause =
-    task.status === "downloading" || task.status === "decrypting";
+  const canPause = task.status === "downloading";
   const isPaused = task.status === "paused";
   const isCompleted = task.status === "completed";
-  const installInfo = isCompleted ? getInstallInfo(task.id) : null;
+    const [installInfo, setInstallInfo] = useState<InstallInfo | null>(null);
+  useEffect(() => {
+    if (isCompleted) {
+      getInstallInfo(task.id).then(setInstallInfo).catch(() => setInstallInfo(null));
+    }
+  }, [task.id, isCompleted]);
 
   const accountEmail = hashToEmail[task.accountHash];
   const accountIndex = accounts.findIndex((a) => a.email === accountEmail);
@@ -227,8 +231,8 @@ export default function PackageDetail() {
             name={task.software.name}
             size="lg"
           />
-          <div className="min-w-0 flex-1">
-            <h2 className="page-title break-words">
+          <div className="flex-1">
+            <h2 className="page-title">
               {task.software.name}
             </h2>
             <p className="page-subtitle">
@@ -257,34 +261,7 @@ export default function PackageDetail() {
           <p className="alert" data-tone="error">{task.error}</p>
         )}
 
-        <VerificationSummary
-          verification={task.verification}
-          sha256={task.sha256}
-          errorCode={task.errorCode}
-        />
-
-        {task.decryptCheckpoint && !isCompleted && (
-          <div className="card card-pad text-sm">
-            <div className="flex justify-between gap-4">
-              <span className="detail-label">{t("downloads.checkpoint.title")}</span>
-              <span className="detail-value">
-                {t("downloads.checkpoint.progress", {
-                  completed: task.decryptCheckpoint.completedMachOCount,
-                  total: task.decryptCheckpoint.totalMachOCount ?? "?",
-                })}
-              </span>
-            </div>
-            <div className="mt-2 flex justify-between gap-4 text-muted">
-              <span>{t("downloads.checkpoint.batch", { size: task.decryptCheckpoint.batchSize })}</span>
-              <span>{t("downloads.checkpoint.attempt", { count: task.decryptCheckpoint.attempt })}</span>
-            </div>
-            {task.decryptCheckpoint.currentPath && (
-              <p className="mt-2 truncate font-mono text-xs text-muted">
-                {task.decryptCheckpoint.currentPath}
-              </p>
-            )}
-          </div>
-        )}
+        <DecryptSummary events={task.decryptEvents} />
 
         {((task.logs?.length ?? 0) > 0 ||
           isActive ||

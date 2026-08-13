@@ -17,15 +17,13 @@
     <true/>
     <key>KeepAlive</key>
     <true/>
-    <key>POSIXSpawnType</key>
-    <string>Interactive</string>
-    <key>JetsamProperties</key>
-    <dict>
-        <key>JetsamMemoryLimit</key>
-        <integer>512</integer>
-        <key>JetsamPriority</key>
-        <integer>10</integer>
-    </dict>
+    <!--
+      Keep this as a system LaunchDaemon. On Dopamine rootless, setting
+      UserName=mobile or Interactive spawn flags moves the process into
+      user/501, where launchd gives it a 6 MB Jetsam budget. Large IPA
+      unpacking/repacking is then SIGKILLed and can destabilize SpringBoard.
+      The daemon drops privileges only for file operations when needed.
+    -->
     <key>WorkingDirectory</key>
     <string>/var/tmp/unfaird</string>
     <key>EnvironmentVariables</key>
@@ -34,18 +32,18 @@
         <string>@DYLD_LIBRARY_PATH@</string>
         <key>PATH</key>
         <string>@LAUNCHD_PATH@</string>
-        <key>UNFAIRD_JB_PREFIX</key>
-        <string>@INSTALL_PREFIX@</string>
-        <key>UNFAIR_PACKAGE_RUNNER</key>
-        <string>@PACKAGE_RUNNER@</string>
         <key>PUBLIC_DIR</key>
         <string>@INSTALL_PREFIX@/usr/share/assppweb/public</string>
         <key>DATA_DIR</key>
         <string>/var/mobile/AssppWebData</string>
         <key>UNSAFE_DANGEROUSLY_DISABLE_HTTPS_REDIRECT</key>
         <string>true</string>
-        <key>DOWNLOAD_THREADS</key>
-        <string>8</string>
+		<key>DOWNLOAD_THREADS</key>
+		<string>2</string>
+        <key>UNFAIR_DISABLE_TASK_MEMORY_DUMP</key>
+        <string>true</string>
+        <key>UNFAIR_SKIP_LIBJAILBREAK</key>
+        <string>true</string>
     </dict>
     <key>StandardOutPath</key>
     <string>/var/tmp/unfaird/logs/unfaird.log</string>

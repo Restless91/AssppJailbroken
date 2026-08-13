@@ -3,6 +3,7 @@ import Vapor
 
 struct Software: Content {
     var id: Int64
+    var rank: Int?
     var bundleID: String
     var name: String
     var version: String
@@ -39,6 +40,8 @@ struct DownloadTask: Content {
     var speed: String
     var error: String?
     var logs: [String]?
+    var decryptEvents: [DecryptEvent]?
+    var forceExtensionDecryption: Bool?
     var filePath: String?
     var createdAt: String
     var hasFile: Bool?
@@ -50,6 +53,19 @@ struct DownloadTask: Content {
     var decryptCheckpoint: DecryptCheckpoint? = nil
     var queuePosition: Int? = nil
     var canRetry: Bool? = nil
+}
+
+struct DecryptEvent: Content {
+    var kind: String
+    var status: String
+   var path: String?
+    var reportTotal: Int?
+    var reportDecrypted: Int?
+    var reportRemaining: Int?
+    var reportMainRemaining: Int?
+    var reportFrameworkRemaining: Int?
+    var reportExtensionRemaining: Int?
+   var message: String
 }
 
 struct PackageInfo: Content {
@@ -66,6 +82,17 @@ struct CreateDownloadRequest: Content {
     var downloadURL: String
     var sinfs: [Sinf]
     var iTunesMetadata: String?
+    var forceExtensionDecryption: Bool?
+    var preflightLogs: [String]?
+}
+
+struct CreateExternalURLDownloadRequest: Content {
+    var software: Software
+    var accountHash: String
+    var sourceURL: String
+    var sinfs: [Sinf]
+    var iTunesMetadata: String?
+    var forceExtensionDecryption: Bool?
 }
 
 struct CreateExternalURLDownloadRequest: Content {
@@ -108,6 +135,7 @@ struct ITunesItem: Decodable {
     func software() -> Software {
         Software(
             id: trackId ?? 0,
+            rank: nil,
             bundleID: bundleId ?? "",
             name: trackName ?? "",
             version: version ?? "",
@@ -127,4 +155,93 @@ struct ITunesItem: Decodable {
             primaryGenreName: primaryGenreName ?? ""
         )
     }
+}
+
+struct TopAppsRSSResponse: Decodable {
+    var feed: TopAppsFeed
+}
+
+struct TopAppsFeed: Decodable {
+    var entry: [TopAppsEntry]?
+}
+
+struct TopAppsEntry: Decodable {
+    var name: TopAppsLabel?
+    var title: TopAppsLabel?
+    var summary: TopAppsLabel?
+    var images: [TopAppsLabel]?
+    var price: TopAppsPrice?
+    var artist: TopAppsLabel?
+    var id: TopAppsID?
+    var category: TopAppsCategory?
+    var releaseDate: TopAppsLabel?
+
+    enum CodingKeys: String, CodingKey {
+        case name = "im:name"
+        case title
+        case summary
+        case images = "im:image"
+        case price = "im:price"
+        case artist = "im:artist"
+        case id
+        case category
+        case releaseDate = "im:releaseDate"
+    }
+
+    func fallbackSoftware(rank: Int) -> Software {
+        Software(
+            id: Int64(id?.attributes.imID ?? "") ?? 0,
+            rank: rank,
+            bundleID: "",
+            name: name?.label ?? title?.label ?? "App \(id?.attributes.imID ?? "")",
+            version: "",
+            price: Double(price?.attributes.amount ?? "0"),
+            artistName: artist?.label ?? "",
+            sellerName: artist?.label ?? "",
+            description: summary?.label ?? "",
+            averageUserRating: 0,
+            userRatingCount: 0,
+            artworkUrl: images?.last?.label ?? "",
+            screenshotUrls: [],
+            minimumOsVersion: "",
+            fileSizeBytes: nil,
+            releaseDate: releaseDate?.label ?? "",
+            releaseNotes: nil,
+            formattedPrice: price?.label,
+            primaryGenreName: category?.attributes.label ?? ""
+        )
+    }
+}
+
+struct TopAppsLabel: Decodable {
+    var label: String
+}
+
+struct TopAppsPrice: Decodable {
+    var label: String?
+    var attributes: TopAppsPriceAttributes
+}
+
+struct TopAppsPriceAttributes: Decodable {
+    var amount: String?
+}
+
+struct TopAppsID: Decodable {
+    var attributes: TopAppsIDAttributes
+}
+
+struct TopAppsIDAttributes: Decodable {
+    var imID: String
+
+    enum CodingKeys: String, CodingKey {
+        case imID = "im:id"
+    }
+}
+
+struct TopAppsCategory: Decodable {
+    var attributes: TopAppsCategoryAttributes
+}
+
+struct TopAppsCategoryAttributes: Decodable {
+    var label: String?
 }

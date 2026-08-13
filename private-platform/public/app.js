@@ -1,7 +1,5 @@
 let currentUser = null;
 let loginPollTimer = null;
-let jobEventSource = null;
-let liveJobRefreshTimer = null;
 
 const pageViews = Array.from(document.querySelectorAll('[data-page]'));
 const routeLinks = Array.from(document.querySelectorAll('[data-route]'));
@@ -14,7 +12,7 @@ const refreshButton = document.querySelector('#refreshButton');
 const syncAccountButton = document.querySelector('#syncAccountButton');
 const refreshJobsButton = document.querySelector('#refreshJobsButton');
 const reloadTopAppsButton = document.querySelector('#reloadTopAppsButton');
-const extensionPolicySelect = document.querySelector('#extensionPolicySelect');
+const forceExtensionToggle = document.querySelector('#forceExtensionToggle');
 const searchForm = document.querySelector('#searchForm');
 const searchInput = document.querySelector('#searchInput');
 const searchCountry = document.querySelector('#searchCountry');
@@ -411,7 +409,7 @@ async function loadJobs(showToast = false) {
     return;
   }
   try {
-    if (showToast) setButtonBusy(refreshJobsButton, true, '刷新中...');
+    setButtonBusy(refreshJobsButton, true, '刷新中...');
     cachedJobs = await api('/api/jobs');
     renderJobFilters();
     renderJobs();
@@ -421,7 +419,7 @@ async function loadJobs(showToast = false) {
     if (jobList) jobList.innerHTML = `<div class="error-box">任务加载失败：${escapeHtml(error.message || String(error))}</div>`;
     toast(error.message || String(error));
   } finally {
-    if (showToast) setButtonBusy(refreshJobsButton, false, '刷新任务');
+    setButtonBusy(refreshJobsButton, false, '刷新任务');
   }
 }
 
@@ -480,12 +478,8 @@ function renderJobs() {
     return;
   }
 
-  reconcileJobCards(jobs);
-}
-
-function jobCardMarkup(job) {
-  return `
-    <article class="card download-card" data-job-id="${escapeHtml(job.id)}" data-job-version="${escapeHtml(job.updatedAt || '')}">
+  jobList.innerHTML = jobs.map((job) => `
+    <article class="card download-card">
       <div class="download-row">
         <img class="app-icon sm" src="${escapeHtml(job.software?.artworkUrl || job.app.artworkUrl || '')}" alt="${escapeHtml(job.app.name)} 图标" loading="lazy" width="44" height="44">
         <div class="download-body">
@@ -499,7 +493,7 @@ function jobCardMarkup(job) {
           <p class="download-meta">${escapeHtml(job.software?.bundleID || job.app.bundleId)} · ${formatDate(job.createdAt)}</p>
           <div class="chip-row">
             ${job.unfairdTaskId ? `<span class="pill neutral">任务 ${escapeHtml(shortId(job.unfairdTaskId))}</span>` : ''}
-            <span class="pill neutral">${escapeHtml(extensionPolicyLabel(job.extensionDecryptionPolicy))}</span>
+            ${job.forceExtensionDecryption ? '<span class="pill neutral">应用扩展模式</span>' : '<span class="pill neutral">稳定模式</span>'}
             ${renderStoragePill(job)}
           </div>
           ${renderQueueInfo(job)}
@@ -527,25 +521,8 @@ function jobCardMarkup(job) {
           </details>
         </div>
       </div>
-    </article>`;
-}
-
-function reconcileJobCards(jobs) {
-  const existing = new Map(Array.from(jobList.querySelectorAll('[data-job-id]')).map((card) => [card.dataset.jobId, card]));
-  const fragment = document.createDocumentFragment();
-  for (const job of jobs) {
-    const current = existing.get(String(job.id));
-    if (current?.dataset.jobVersion === String(job.updatedAt || '')) {
-      fragment.append(current);
-      continue;
-    }
-    const template = document.createElement('template');
-    template.innerHTML = jobCardMarkup(job).trim();
-    const next = template.content.firstElementChild;
-    if (current?.querySelector('details[open]')) next.querySelector('details')?.setAttribute('open', '');
-    fragment.append(next);
-  }
-  jobList.replaceChildren(fragment);
+    </article>
+  `).join('');
 }
 
 function submitSearch({ input, country, entity }) {
@@ -668,7 +645,7 @@ async function createSoftwareJob(appId, button, source, options = {}) {
         country: storefront,
         storefront,
         externalVersionId: options.externalVersionId || undefined,
-        extensionDecryptionPolicy: extensionPolicySelect?.value === 'auto' ? undefined : extensionPolicySelect?.value
+        forceExtensionDecryption: Boolean(forceExtensionToggle.checked)
       })
     });
     const versionText = options.externalVersionId ? `（历史版本 ${options.externalVersionId}）` : '';
@@ -683,10 +660,6 @@ async function createSoftwareJob(appId, button, source, options = {}) {
   } finally {
     setButtonBusy(button, false, resetLabel);
   }
-}
-
-function extensionPolicyLabel(value) {
-  return { main_only: '仅主程序', compatible: '兼容扩展', strict: '严格扩展' }[value] || '自动策略';
 }
 
 async function maybeRefreshNotificationAuthorization() {
@@ -1505,25 +1478,13 @@ async function bootApp() {
   await loadPlatformCapabilities();
   renderCreditBalance();
   await showRoute(location.pathname + location.search + location.hash);
-  connectJobEvents();
-}
-
-function connectJobEvents() {
-  jobEventSource?.close();
-  jobEventSource = null;
-  if (!currentUser?.authenticated || typeof EventSource === 'undefined') return;
-  jobEventSource = new EventSource('/api/jobs/events');
-  jobEventSource.addEventListener('job.changed', () => {
-    clearTimeout(liveJobRefreshTimer);
-    liveJobRefreshTimer = setTimeout(() => loadJobs(), 250);
-  });
 }
 
 currentUser = await api('/api/auth/me').catch(() => ({ authenticated: false, type: 'anonymous' }));
 await bootApp();
 setInterval(() => {
   if (currentUser?.authenticated) loadJobs();
-}, 15000);
+}, 4000);
 setInterval(() => {
   if (currentUser?.authenticated) loadDevices();
 }, 12000);

@@ -20,15 +20,34 @@ let package = Package(
         .package(url: "https://github.com/weichsel/ZIPFoundation.git", exact: "0.9.19"),
     ],
     targets: [
-        .target(name: "UnfairDaemonSupport"),
+        .target(
+            name: "CFridaCore",
+            path: "Sources/CFridaCore",
+            sources: ["frida_shim.c"],
+            publicHeadersPath: "include",
+            cSettings: [
+                .headerSearchPath("include"),
+            ],
+            linkerSettings: [
+                .unsafeFlags(["-L", "Sources/CFridaCore/lib", "-lfrida-core", "-lresolv"]),
+            ]
+        ),
+        .target(
+            name: "UnfairDaemonSupport",
+            linkerSettings: [.linkedLibrary("z")]
+        ),
         .target(
             name: "UnfairDaemonCore",
             dependencies: [
+                "CFridaCore",
+                "UnfairDaemonSupport",
+                .product(name: "UnfairKit", package: "unfair-swift"),
                 .product(name: "AsyncHTTPClient", package: "async-http-client"),
                 .product(name: "ApplePackage", package: "ApplePackage"),
                 .product(name: "Vapor", package: "vapor"),
                 .product(name: "ZIPFoundation", package: "ZIPFoundation"),
-            ]
+            ],
+            resources: [.process("Resources")]
         ),
         .executableTarget(
             name: "UnfairDaemon",

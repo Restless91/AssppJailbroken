@@ -232,6 +232,7 @@ enum HistoricalVersionProvider {
         return 0
     }
 }
+
 struct HistoricalVersionProviderResult: Sendable {
     var provider: String
     var records: [HistoricalVersionRecord]

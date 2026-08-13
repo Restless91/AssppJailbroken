@@ -10,6 +10,49 @@ enum PackageRunnerSandbox {
             .standardizedFileURL
     }
 
+    static func stageInput(_ source: URL, in packageWorkingDirectory: URL) throws -> URL {
+        let fileManager = FileManager.default
+        let sourceURL = source.standardizedFileURL
+        let destinationURL = packageWorkingDirectory
+            .appendingPathComponent("input.ipa", isDirectory: false)
+            .standardizedFileURL
+
+        try fileManager.createDirectory(
+            at: packageWorkingDirectory,
+            withIntermediateDirectories: true
+        )
+
+        if sourceURL == destinationURL {
+            guard fileManager.fileExists(atPath: sourceURL.path) else {
+                throw Abort(.internalServerError, reason: "input IPA disappeared before staging: \(sourceURL.path)")
+            }
+            return destinationURL
+        }
+
+        guard fileManager.fileExists(atPath: sourceURL.path) else {
+            throw Abort(.internalServerError, reason: "input IPA disappeared before staging: \(sourceURL.path)")
+        }
+
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            try fileManager.removeItem(at: destinationURL)
+        }
+
+        do {
+            try fileManager.linkItem(at: sourceURL, to: destinationURL)
+        } catch {
+            do {
+                try fileManager.copyItem(at: sourceURL, to: destinationURL)
+            } catch {
+                throw Abort(
+                    .internalServerError,
+                    reason: "failed to stage input IPA before decrypting: \(error.localizedDescription)"
+                )
+            }
+        }
+
+        return destinationURL
+    }
+
     static func writeProfile(jobDirectory: URL) throws -> URL? {
         #if os(iOS)
         return nil
@@ -58,12 +101,13 @@ enum PackageRunnerSandbox {
             .standardizedFileURL
     }
 
-    private static func packageTemporaryRoot() throws -> URL {
-        try runtimeTemporaryContainerRoot()
-            .appendingPathComponent("X", isDirectory: true)
-            .appendingPathComponent("unfair", isDirectory: true)
-            .standardizedFileURL
-    }
+   private static func packageTemporaryRoot() throws -> URL {
+        // Use /var/mobile/Documents/ which is on the real filesystem,
+        // not the RootHide namespace, so appinst/installd can see staged files.
+        let root = URL(fileURLWithPath: "/var/tmp/unfaird-work", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root.standardizedFileURL
+   }
 
     private static func pathFilters(for urls: [URL]) -> [String] {
         var filters: [String] = []

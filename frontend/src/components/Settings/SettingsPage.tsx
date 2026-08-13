@@ -5,7 +5,7 @@ import Modal from "../common/Modal";
 import { useAccountsStore } from "../../store/accounts";
 import { useSettingsStore } from "../../store/settings";
 import { useToastStore } from "../../store/toast";
-import { apiGet } from "../../api/client";
+import { apiDelete, apiGet, apiPost } from "../../api/client";
 import { encryptData, decryptData } from "../../utils/crypto";
 import { countryCodeMap } from "../../apple/config";
 import type { Account } from "../../types";
@@ -22,6 +22,30 @@ interface ServerInfo {
   autoCleanupMaxMB?: number;
   maxDownloadMB?: number;
   downloadThreads?: number;
+  forceExtensionDecryption?: boolean;
+  canEditSettings?: boolean;
+  tokens?: AccessTokenInfo[];
+}
+
+interface AccessTokenInfo {
+  id: string;
+  name: string;
+  totalUses: number;
+  remainingUses: number;
+  createdAt: string;
+  lastUsedAt?: string | null;
+  revokedAt?: string | null;
+  isActive: boolean;
+}
+
+interface ServerConfigForm {
+  publicBaseUrl: string;
+  disableHttpsRedirect: boolean;
+  autoCleanupDays: number;
+  autoCleanupMaxMB: number;
+  maxDownloadMB: number;
+  downloadThreads: number;
+  forceExtensionDecryption: boolean;
 }
 
 const entityTypes = [
@@ -43,6 +67,20 @@ export default function SettingsPage() {
     () => localStorage.getItem("asspp-default-entity") || "software",
   );
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
+  const [serverForm, setServerForm] = useState<ServerConfigForm>({
+    publicBaseUrl: "",
+    disableHttpsRedirect: false,
+    autoCleanupDays: 0,
+    autoCleanupMaxMB: 0,
+    maxDownloadMB: 0,
+    downloadThreads: 8,
+    forceExtensionDecryption: false,
+  });
+  const [savingServer, setSavingServer] = useState(false);
+  const [tokenName, setTokenName] = useState("");
+  const [tokenUses, setTokenUses] = useState(5);
+  const [generatedToken, setGeneratedToken] = useState("");
+  const [generatingToken, setGeneratingToken] = useState(false);
 
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportPassword, setExportPassword] = useState("");
@@ -66,9 +104,7 @@ export default function SettingsPage() {
   }, [entity]);
 
   useEffect(() => {
-    apiGet<ServerInfo>("/api/settings")
-      .then(setServerInfo)
-      .catch(() => setServerInfo(null));
+    loadServerInfo();
   }, []);
 
   const sortedCountries = Object.keys(countryCodeMap).sort((a, b) =>
@@ -184,6 +220,69 @@ export default function SettingsPage() {
       t(enabled ? "settings.demo.enabled" : "settings.demo.disabled"),
       "success",
     );
+  };
+
+  const loadServerInfo = async () => {
+    try {
+      const info = await apiGet<ServerInfo>("/api/settings");
+      setServerInfo(info);
+      setServerForm(formFromServerInfo(info));
+    } catch {
+      setServerInfo(null);
+    }
+  };
+
+  const handleSaveServerSettings = async () => {
+    setSavingServer(true);
+    try {
+      const updated = await apiPost<ServerInfo>("/api/settings", serverForm);
+      setServerInfo((prev) => ({ ...prev, ...updated }));
+      setServerForm(formFromServerInfo(updated));
+      addToast(t("settings.server.saved"), "success");
+    } catch {
+      addToast(t("settings.server.saveFailed"), "error");
+    } finally {
+      setSavingServer(false);
+    }
+  };
+
+  const handleGenerateToken = async () => {
+    setGeneratingToken(true);
+    try {
+      const result = await apiPost<{
+        token: string;
+        record: AccessTokenInfo;
+      }>("/api/access-tokens", {
+        name: tokenName.trim() || undefined,
+        uses: tokenUses || 5,
+      });
+      setGeneratedToken(result.token);
+      setTokenName("");
+      setTokenUses(5);
+      await loadServerInfo();
+      addToast(t("settings.tokens.generated"), "success");
+    } catch {
+      addToast(t("settings.tokens.generateFailed"), "error");
+    } finally {
+      setGeneratingToken(false);
+    }
+  };
+
+  const handleRevokeToken = async (id: string) => {
+    if (!confirm(t("settings.tokens.revokeConfirm"))) return;
+    try {
+      await apiDelete(`/api/access-tokens/${encodeURIComponent(id)}`);
+      await loadServerInfo();
+      addToast(t("settings.tokens.revoked"), "success");
+    } catch {
+      addToast(t("settings.tokens.revokeFailed"), "error");
+    }
+  };
+
+  const copyGeneratedToken = async () => {
+    if (!generatedToken) return;
+    await navigator.clipboard.writeText(generatedToken);
+    addToast(t("settings.tokens.copied"), "success");
   };
 
   return (
@@ -326,81 +425,152 @@ export default function SettingsPage() {
                 <h3 className="section-title mb-3">
                   {t("settings.server.configuration")}
                 </h3>
-                <dl className="space-y-3">
-                  <div>
-                    <dt className="detail-label">
-                      PORT
-                    </dt>
-                    <dd className="detail-value font-mono">
-                      {serverInfo.port}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="detail-label">
-                      DATA_DIR
-                    </dt>
-                    <dd className="detail-value font-mono">
-                      {serverInfo.dataDir}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="detail-label">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <ReadonlyField label="PORT" value={serverInfo.port} />
+                  <ReadonlyField label="DATA_DIR" value={serverInfo.dataDir} />
+                  <div className="md:col-span-2">
+                    <label className="field-label">
                       PUBLIC_BASE_URL
-                    </dt>
-                    <dd className="detail-value font-mono">
-                      {serverInfo.publicBaseUrl || (
-                        <span className="text-subtle italic">
-                          {t("settings.server.notSet")}
-                        </span>
-                      )}
-                    </dd>
+                    </label>
+                    <input
+                      value={serverForm.publicBaseUrl}
+                      onChange={(e) =>
+                        setServerForm((form) => ({
+                          ...form,
+                          publicBaseUrl: e.target.value,
+                        }))
+                      }
+                      disabled={serverInfo.canEditSettings === false}
+                      placeholder={t("settings.server.notSet")}
+                      className="field-input font-mono"
+                    />
+                    <p className="mt-1 text-[12px] text-muted">
+                      {t("settings.server.publicBaseHelp")}
+                    </p>
                   </div>
-                  <div>
-                    <dt className="detail-label">
-                      UNSAFE_DANGEROUSLY_DISABLE_HTTPS_REDIRECT
-                    </dt>
-                    <dd className="detail-value font-mono">
-                      {serverInfo.disableHttpsRedirect
-                        ? t("settings.server.enabled")
-                        : t("settings.server.disabled")}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="detail-label">
-                      AUTO_CLEANUP_DAYS
-                    </dt>
-                    <dd className="detail-value font-mono">
-                      {serverInfo.autoCleanupDays ||
-                        t("settings.server.disabled")}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="detail-label">
-                      AUTO_CLEANUP_MAX_MB
-                    </dt>
-                    <dd className="detail-value font-mono">
-                      {serverInfo.autoCleanupMaxMB ||
-                        t("settings.server.disabled")}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="detail-label">
-                      MAX_DOWNLOAD_MB
-                    </dt>
-                    <dd className="detail-value font-mono">
-                      {serverInfo.maxDownloadMB ||
-                        t("settings.server.disabled")}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="detail-label">
-                      DOWNLOAD_THREADS
-                    </dt>
-                    <dd className="detail-value font-mono">
-                      {serverInfo.downloadThreads ?? 8}
-                    </dd>
-                  </div>
-                </dl>
+                  <NumberField
+                    label="AUTO_CLEANUP_DAYS"
+                    value={serverForm.autoCleanupDays}
+                    disabled={serverInfo.canEditSettings === false}
+                    help={t("settings.server.zeroDisabled")}
+                    onChange={(value) =>
+                      setServerForm((form) => ({
+                        ...form,
+                        autoCleanupDays: value,
+                      }))
+                    }
+                  />
+                  <NumberField
+                    label="AUTO_CLEANUP_MAX_MB"
+                    value={serverForm.autoCleanupMaxMB}
+                    disabled={serverInfo.canEditSettings === false}
+                    help={t("settings.server.zeroDisabled")}
+                    onChange={(value) =>
+                      setServerForm((form) => ({
+                        ...form,
+                        autoCleanupMaxMB: value,
+                      }))
+                    }
+                  />
+                  <NumberField
+                    label="MAX_DOWNLOAD_MB"
+                    value={serverForm.maxDownloadMB}
+                    disabled={serverInfo.canEditSettings === false}
+                    help={t("settings.server.zeroDisabled")}
+                    onChange={(value) =>
+                      setServerForm((form) => ({
+                        ...form,
+                        maxDownloadMB: value,
+                      }))
+                    }
+                  />
+                  <NumberField
+                    label="DOWNLOAD_THREADS"
+                    value={serverForm.downloadThreads}
+                    min={1}
+                    max={32}
+                    disabled={serverInfo.canEditSettings === false}
+                    help={t("settings.server.downloadThreadsHelp")}
+                    onChange={(value) =>
+                      setServerForm((form) => ({
+                        ...form,
+                        downloadThreads: value,
+                      }))
+                    }
+                  />
+                  <label
+                    htmlFor="force-extension-decryption"
+                    className="md:col-span-2 flex items-center justify-between gap-4 rounded-2xl border border-border bg-surface px-4 py-3"
+                  >
+                    <div>
+                      <span className="field-label mb-0">
+                        {t("settings.server.forceExtensions")}
+                      </span>
+                      <span className="mt-1 block text-[12px] text-muted">
+                        {t("settings.server.forceExtensionsHelp")}
+                      </span>
+                    </div>
+                    <input
+                      id="force-extension-decryption"
+                      type="checkbox"
+                      checked={serverForm.forceExtensionDecryption}
+                      disabled={serverInfo.canEditSettings === false}
+                      onChange={(e) =>
+                        setServerForm((form) => ({
+                          ...form,
+                          forceExtensionDecryption: e.target.checked,
+                        }))
+                      }
+                      className="sr-only peer"
+                    />
+                    <span className="switch-track" />
+                  </label>
+                  <label
+                    htmlFor="disable-https-redirect"
+                    className="md:col-span-2 flex items-center justify-between gap-4 rounded-2xl border border-border bg-surface px-4 py-3"
+                  >
+                    <div>
+                      <span className="field-label mb-0">
+                        UNSAFE_DANGEROUSLY_DISABLE_HTTPS_REDIRECT
+                      </span>
+                      <span className="mt-1 block text-[12px] text-muted">
+                        {t("settings.server.httpsRedirectHelp")}
+                      </span>
+                    </div>
+                    <input
+                      id="disable-https-redirect"
+                      type="checkbox"
+                      checked={serverForm.disableHttpsRedirect}
+                      disabled={serverInfo.canEditSettings === false}
+                      onChange={(e) =>
+                        setServerForm((form) => ({
+                          ...form,
+                          disableHttpsRedirect: e.target.checked,
+                        }))
+                      }
+                      className="sr-only peer"
+                    />
+                    <span className="switch-track" />
+                  </label>
+                </div>
+
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <button
+                    onClick={handleSaveServerSettings}
+                    disabled={savingServer || serverInfo.canEditSettings === false}
+                    className="btn btn-primary"
+                  >
+                    {savingServer
+                      ? t("settings.server.saving")
+                      : t("settings.server.save")}
+                  </button>
+                  <button
+                    onClick={loadServerInfo}
+                    className="btn btn-ghost"
+                  >
+                    {t("settings.server.reload")}
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
@@ -605,6 +775,86 @@ export default function SettingsPage() {
         </div>
       </Modal>
     </PageContainer>
+  );
+}
+
+function formFromServerInfo(info: ServerInfo): ServerConfigForm {
+  return {
+    publicBaseUrl: info.publicBaseUrl || "",
+    disableHttpsRedirect: info.disableHttpsRedirect === true,
+    autoCleanupDays: info.autoCleanupDays || 0,
+    autoCleanupMaxMB: info.autoCleanupMaxMB || 0,
+    maxDownloadMB: info.maxDownloadMB || 0,
+    downloadThreads: info.downloadThreads || 8,
+    forceExtensionDecryption: info.forceExtensionDecryption === true,
+  };
+}
+
+function numberInput(value: string, fallback = 0): number {
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed)) return fallback;
+  return Math.max(0, parsed);
+}
+
+function ReadonlyField({
+  label,
+  value,
+}: {
+  label: string;
+  value?: string | number;
+}) {
+  return (
+    <div>
+      <div className="detail-label">
+        {label}
+      </div>
+      <div className="detail-value font-mono">
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  min = 0,
+  max,
+  help,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min?: number;
+  max?: number;
+  help?: string;
+  disabled?: boolean;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div>
+      <label className="field-label">
+        {label}
+      </label>
+      <input
+        type="number"
+        min={min}
+        max={max}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => {
+          const next = numberInput(e.target.value, min);
+          onChange(max == null ? Math.max(min, next) : Math.min(max, Math.max(min, next)));
+        }}
+        className="field-input font-mono"
+      />
+      {help && (
+        <p className="mt-1 text-[12px] text-muted">
+          {help}
+        </p>
+      )}
+    </div>
   );
 }
 

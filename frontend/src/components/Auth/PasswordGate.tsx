@@ -1,17 +1,16 @@
 import { useState, useEffect, type FormEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { sha256Hex } from "../../utils/sha256";
 
 const SESSION_KEY = "auth-token";
+const AUTH_VERIFIED_EVENT = "asspp-auth-verified";
+
+function notifyAuthVerified(): void {
+  window.dispatchEvent(new Event(AUTH_VERIFIED_EVENT));
+}
 
 export function getAccessToken(): string | null {
   return sessionStorage.getItem(SESSION_KEY);
-}
-
-async function hashPassword(password: string): Promise<string> {
-  const data = new TextEncoder().encode(password);
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export default function PasswordGate({ children }: { children: ReactNode }) {
@@ -27,9 +26,15 @@ export default function PasswordGate({ children }: { children: ReactNode }) {
     fetch("/api/auth/status")
       .then((r) => r.json())
       .then(async (data: { required: boolean }) => {
+        if (data.required && window.location.pathname.startsWith("/settings")) {
+          setStatus("verified");
+          return;
+        }
+
         if (!data.required) {
           sessionStorage.removeItem(SESSION_KEY);
           setStatus("verified");
+          notifyAuthVerified();
           return;
         }
 
@@ -45,6 +50,7 @@ export default function PasswordGate({ children }: { children: ReactNode }) {
             const result = (await res.json()) as { ok: boolean };
             if (result.ok) {
               setStatus("verified");
+              notifyAuthVerified();
               return;
             }
           } catch {
@@ -67,7 +73,7 @@ export default function PasswordGate({ children }: { children: ReactNode }) {
     setSubmitting(true);
 
     try {
-      const hash = await hashPassword(password);
+      const hash = await sha256Hex(password);
       const res = await fetch("/api/auth/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -78,6 +84,7 @@ export default function PasswordGate({ children }: { children: ReactNode }) {
       if (data.ok) {
         sessionStorage.setItem(SESSION_KEY, hash);
         setStatus("verified");
+        notifyAuthVerified();
       } else {
         setError(t("auth.error"));
       }
