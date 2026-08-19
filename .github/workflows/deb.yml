@@ -92,7 +92,12 @@ jobs:
           set -euo pipefail
           node scripts/release-manifest.mjs validate
           expected="$(node scripts/release-manifest.mjs version)"
+          # The manifest CLI emits shell assignments (not exported variables).
+          # Enable allexport so the same values are available to subsequent
+          # commands in this validation step and to Make.
+          set -a
           source <(node scripts/release-manifest.mjs env "${{ matrix.variant }}")
+          set +a
           actual="$(awk '/^Version:/ { print $2; exit }' "backend-swift/packaging/control.${{ matrix.variant }}")"
           test "$expected" = "$actual"
           test "$RELEASE_VERSION" = "$expected"
