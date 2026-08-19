@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "version": "0.1.16",
+  "dependencies": {
+    "unfair": {
+      "repository": "lbr77/unfair",
+      "ref": "98d7fb3972f8b229862003a0c065907a8cbe6e5f",
+      "minIOS": "14.0"
+    },
+    "applePackage": {
+      "repository": "Lakr233/ApplePackage",
+      "exactVersion": "1.2.7",
+      "minIOS": "15.0",
+      "patchStrategy": "profile-compatibility-patch",
+      "sourcePatches": [
+        {
+          "id": "runtimeFixes",
+          "strategy": "build-time-source-patch",
+          "profiles": [
+            "iphone8",
+            "iphone11",
+            "iphone15"
+          ],
+          "evidenceFiles": [
+            {
+              "path": "scripts/prepare-applepackage-dependency.sh",
+              "sha256": "c1f1ee2a289bfd9b50f0d44cbff8458ef70b78a07f6bfe94804d10485bcbf602"
+            },
+            {
+              "path": "patches/applepackage-runtime-fixes.patch",
+              "sha256": "461db26a75f170eb476d72ec13aef855c8bfdeb58e418c3912365fd9c5b5dd0a"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "compatibilityPatches": {
+    "applePackageIOS14": {
+      "dependency": "applePackage",
+      "profiles": [
+        "iphone11"
+      ],
+      "strategy": "build-time-source-patch",
+      "evidenceFiles": [
+        {
+          "path": "scripts/prepare-applepackage-dependency.sh",
+          "sha256": "c1f1ee2a289bfd9b50f0d44cbff8458ef70b78a07f6bfe94804d10485bcbf602"
+        },
+        {
+          "path": "patches/applepackage-ios14.patch",
+          "sha256": "e88617bdb7ebf8588545bf4ae80117fe625d53561a2eda23eeb34dd947981b11"
+        }
+      ]
+    }
+  },
+  "profiles": {
+    "iphone8": {
+      "profile": "rootless",
+      "deviceArchitecture": "arm64",
+      "debArchitecture": "iphoneos-arm64",
+      "machOArch": "arm64",
+      "swiftTarget": "arm64-apple-ios15.0",
+      "minIOS": "15.0",
+      "provider": "builtin",
+      "extensionPolicy": "main-only",
+      "batchSize": 2,
+      "jetsamMB": 512,
+      "compatibilityPatches": [],
+      "runtimeAssets": []
+    },
+    "iphone11": {
+      "profile": "taurine",
+      "deviceArchitecture": "arm64",
+      "debArchitecture": "iphoneos-arm",
+      "machOArch": "arm64",
+      "swiftTarget": "arm64-apple-ios14.0",
+      "minIOS": "14.0",
+      "provider": "fouldecrypt.kernrw",
+      "extensionPolicy": "compatible",
+      "batchSize": 4,
+      "jetsamMB": 512,
+      "compatibilityPatches": [
+        "applePackageIOS14"
+      ],
+      "runtimeAssets": [
+        {
+          "path": "backend-swift/vendor/taurine/bootstrap/UnfairRuntimeRunner",
+          "sha256": "d701ee770f9a1304838f8ab02c15aea6b05f290a6d1d48dbaa3ece616317c5ea"
+        },
+        {
+          "path": "backend-swift/vendor/taurine/bootstrap/UnfairRuntimeDumper.dylib",
+          "sha256": "db647eefb4e49f9729b36ebedf8adf2e74ffda0cc0d944ade5a00c4c943bc8b3"
+        },
+        {
+          "path": "backend-swift/vendor/taurine/fouldecrypt.kernrw",
+          "sha256": "a91a41f0d585bdfc0e5ae7a49da2add23a693abc81c3c6b4e5f4f088525bdff8"
+        },
+        {
+          "path": "backend-swift/vendor/taurine/libkernrw.0.dylib",
+          "sha256": "692c24e43afad2f9a47536cbc3501f1783b72525997d02a66e18a0bf6fa59def"
+        }
+      ]
+    },
+    "iphone15": {
+      "profile": "rootless",
+      "deviceArchitecture": "arm64e",
+      "debArchitecture": "iphoneos-arm64",
+      "machOArch": "arm64",
+      "swiftTarget": "arm64-apple-ios15.0",
+      "minIOS": "15.0",
+      "provider": "builtin",
+      "extensionPolicy": "compatible",
+      "batchSize": 8,
+      "jetsamMB": 512,
+      "compatibilityPatches": [],
+      "runtimeAssets": []
+    }
+  }
+}

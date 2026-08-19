@@ -20,6 +20,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/release-manifest.mjs validate
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            test "${GITHUB_REF_NAME#v}" = "$(node scripts/release-manifest.mjs version)"
+          fi
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 

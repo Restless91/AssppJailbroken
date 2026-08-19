@@ -320,7 +320,8 @@ struct DecryptService {
                 outputPath: job.outputURL.path,
                 workingDirectoryPath: packageWorkingDirectory.path,
                 extensionPolicy: .compatible,
-                supportsExtensionPolicy: runnerPath != currentExecutable
+                supportsExtensionPolicy: runnerPath != currentExecutable,
+                verbose: BuildInfo.variant != "iphone15"
             ),
             job.directoryURL,
             sandboxProfileURL,

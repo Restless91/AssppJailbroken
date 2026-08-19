@@ -177,7 +177,21 @@ final class DecryptVerifierTests: XCTestCase {
         try makeIPA(at: source, entries: [path: makeWatchFatMachO(iPhoneCryptid: 1)])
         try makeIPA(at: output, entries: [path: makeWatchFatMachO(iPhoneCryptid: 0)])
 
-        XCTAssertNoThrow(try DecryptVerifier.verify(outputURL: output, sourceURL: source))
+        XCTAssertNoThrow(try DecryptVerifier.verify(outputURL: output, sourceURL: source, extensionPolicy: .compatible))
+    }
+
+    func testAcceptsExpectedArm64_32WatchSliceChanges() throws {
+        let context = try FixtureContext()
+        defer { context.cleanup() }
+        let source = context.root.appendingPathComponent("source-arm64-32.ipa")
+        let output = context.root.appendingPathComponent("output-arm64-32.ipa")
+        let path = "Payload/Test.app/Watch/TestWatch.app/PlugIns/TestWatchExtension.appex/TestWatchExtension"
+        let sourceMachO = makeWatchFatMachO(iPhoneCryptid: 1, watchCryptid: 1)
+        let outputMachO = makeWatchFatMachO(iPhoneCryptid: 0, watchCryptid: 0)
+        try makeIPA(at: source, entries: [path: sourceMachO])
+        try makeIPA(at: output, entries: [path: outputMachO])
+
+        XCTAssertNoThrow(try DecryptVerifier.verify(outputURL: output, sourceURL: source, extensionPolicy: .strict))
     }
 
     private func makeIPA(at url: URL, entries: [String: Data]) throws {
@@ -214,8 +228,8 @@ final class DecryptVerifierTests: XCTestCase {
         return data
     }
 
-    private func makeWatchFatMachO(iPhoneCryptid: UInt32) -> Data {
-        let watch = makeMachO(cryptid: 1, encryptedByte: 0x41, cpuType: 0x0200000c)
+    private func makeWatchFatMachO(iPhoneCryptid: UInt32, watchCryptid: UInt32 = 1) -> Data {
+        let watch = makeMachO(cryptid: watchCryptid, encryptedByte: watchCryptid == 0 ? 0x71 : 0x41, cpuType: 0x0200000c)
         let phone = makeMachO(cryptid: iPhoneCryptid, encryptedByte: iPhoneCryptid == 0 ? 0x71 : 0x42)
         var data = Data(repeating: 0, count: 0x500)
         data.writeBE(UInt32(0xcafebabe), at: 0)

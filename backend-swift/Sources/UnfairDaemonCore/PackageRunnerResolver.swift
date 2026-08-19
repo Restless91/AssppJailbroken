@@ -28,15 +28,18 @@ enum PackageRunnerResolver {
         supportsExtensionPolicy: Bool,
         batchSize: Int? = nil,
         checkpointPath: String? = nil,
-        supportsResumableBatches: Bool = false
+        supportsResumableBatches: Bool = false,
+        verbose: Bool = false
     ) -> [String] {
         var values = [
             "package",
             "--input", inputPath,
             "--output", outputPath,
             "--working-directory", workingDirectoryPath,
-            "--verbose",
         ]
+        if verbose {
+            values.append("--verbose")
+        }
         if extensionPolicy == .strict && supportsExtensionPolicy {
             values.append("--force-extensions")
         }

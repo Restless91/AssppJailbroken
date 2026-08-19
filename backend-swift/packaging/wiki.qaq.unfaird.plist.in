@@ -46,6 +46,8 @@
         <string>true</string>
         <key>DOWNLOAD_THREADS</key>
         <string>8</string>
+        <key>UNFAIR_DISABLE_TASK_RESUME</key>
+        <string>true</string>
     </dict>
     <key>StandardOutPath</key>
     <string>/var/tmp/unfaird/logs/unfaird.log</string>

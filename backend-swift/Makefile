@@ -1,22 +1,49 @@
 SHELL := /bin/bash
 
 DEVICE_HOST ?=
-DEVICE_PROFILE ?= rootless
 DEVICE_VARIANT ?= iphone15
 THEOS ?= $(HOME)/theos
-THEOS_PACKAGE_SCHEME ?= rootless
 THEOS_PACKAGE_DIR_NAME ?= debs
-ARCHS := arm64
+RELEASE_MANIFEST_TOOL := ../scripts/release-manifest.mjs
+REQUESTED_DEVICE_PROFILE := $(strip $(DEVICE_PROFILE))
+RELEASE_PROFILE_ENV := $(shell node "$(RELEASE_MANIFEST_TOOL)" env "$(DEVICE_VARIANT)")
 
-ifeq ($(DEVICE_PROFILE),taurine)
-override THEOS_PACKAGE_SCHEME :=
-override THEOS_PACKAGE_ARCH := iphoneos-arm
-TARGET := iphone:clang:latest:15.0
-IOS_TARGET := arm64-apple-ios15.0
-else
-TARGET := iphone:clang:latest:15.0
-IOS_TARGET := arm64-apple-ios15.0
+ifeq ($(strip $(RELEASE_PROFILE_ENV)),)
+$(error Unable to load release profile '$(DEVICE_VARIANT)' from $(RELEASE_MANIFEST_TOOL))
 endif
+
+manifest_value = $(patsubst $(1)=%,%,$(filter $(1)=%,$(RELEASE_PROFILE_ENV)))
+RELEASE_VERSION := $(call manifest_value,RELEASE_VERSION)
+MANIFEST_DEVICE_PROFILE := $(call manifest_value,DEVICE_PROFILE)
+DEVICE_ARCHITECTURE := $(call manifest_value,DEVICE_ARCHITECTURE)
+DEB_ARCHITECTURE := $(call manifest_value,DEB_ARCHITECTURE)
+MACH_O_ARCH := $(call manifest_value,MACH_O_ARCH)
+SWIFT_TARGET := $(call manifest_value,SWIFT_TARGET)
+MIN_IOS := $(call manifest_value,MIN_IOS)
+
+ifneq ($(REQUESTED_DEVICE_PROFILE),)
+ifneq ($(REQUESTED_DEVICE_PROFILE),$(MANIFEST_DEVICE_PROFILE))
+$(error DEVICE_PROFILE=$(REQUESTED_DEVICE_PROFILE) does not match $(DEVICE_VARIANT) manifest profile $(MANIFEST_DEVICE_PROFILE))
+endif
+endif
+
+override DEVICE_PROFILE := $(MANIFEST_DEVICE_PROFILE)
+override THEOS_PACKAGE_ARCH := $(DEB_ARCHITECTURE)
+ARCHS := $(MACH_O_ARCH)
+TARGET := iphone:clang:latest:$(MIN_IOS)
+IOS_TARGET := $(SWIFT_TARGET)
+
+ifeq ($(DEVICE_PROFILE),rootless)
+override THEOS_PACKAGE_SCHEME := rootless
+else ifeq ($(DEVICE_PROFILE),taurine)
+override THEOS_PACKAGE_SCHEME :=
+else
+$(error Unsupported release profile layout: $(DEVICE_PROFILE))
+endif
+
+export RELEASE_VERSION DEVICE_VARIANT DEVICE_PROFILE
+export DEVICE_ARCHITECTURE DEB_ARCHITECTURE MACH_O_ARCH SWIFT_TARGET IOS_TARGET MIN_IOS
+export THEOS_PACKAGE_SCHEME THEOS_PACKAGE_ARCH
 
 PACKAGE_NAME := wiki.qaq.unfaird
 EXECUTABLE_NAME := UnfairDaemon
@@ -37,7 +64,7 @@ PROFILE_CONTROL := packaging/control.$(DEVICE_VARIANT)
 
 IOS_SWIFT_FLAGS := --triple $(IOS_TARGET) --sdk "$(IPHONEOS_SDK_PATH)"
 
-.PHONY: all build release ios-release assppweb-frontend mac-install mac-uninstall generate-build-info validate-profile-control clean-package
+.PHONY: all build release ios-release prepare-profile-dependencies assppweb-frontend mac-install mac-uninstall generate-build-info validate-profile-control clean-package
 
 all:: ios-release
 
@@ -45,16 +72,21 @@ build:
 	@set -euo pipefail; \
 	original="$$(mktemp)"; \
 	cp "$(BUILD_INFO)" "$$original"; \
-	restore() { cp "$$original" "$(BUILD_INFO)"; rm -f "$$original"; }; \
+	package_original="$$(mktemp)"; cp Package.swift "$$package_original"; \
+	unfair_original="$$(mktemp)"; cp ../../unfair/Package.swift "$$unfair_original"; \
+	if [[ "$(MIN_IOS)" == "14.0" ]]; then perl -0pi -e 's/\\.iOS\\(\\.v15\\)/.iOS(.v14)/' Package.swift ../../unfair/Package.swift; else perl -0pi -e 's/\\.iOS\\(\\.v14\\)/.iOS(.v15)/' Package.swift ../../unfair/Package.swift; fi; \
+	restore() { cp "$$original" "$(BUILD_INFO)"; cp "$$package_original" Package.swift; cp "$$unfair_original" ../../unfair/Package.swift; rm -f "$$original" "$$package_original" "$$unfair_original"; }; \
 	trap restore EXIT; \
 	$(MAKE) generate-build-info; \
 	swift build
 
-release:
-	@set -euo pipefail; \
-	original="$$(mktemp)"; \
-	cp "$(BUILD_INFO)" "$$original"; \
-	restore() { cp "$$original" "$(BUILD_INFO)"; rm -f "$$original"; }; \
+	release:
+		@set -euo pipefail; \
+		original="$$(mktemp)"; \
+		cp "$(BUILD_INFO)" "$$original"; \
+		package_original="$$(mktemp)"; cp Package.swift "$$package_original"; \
+	if [[ "$(MIN_IOS)" == "14.0" ]]; then perl -0pi -e 's/\.iOS\(\.v15\)/.iOS(.v14)/' Package.swift; else perl -0pi -e 's/\.iOS\(\.v14\)/.iOS(.v15)/' Package.swift; fi; \
+		restore() { cp "$$original" "$(BUILD_INFO)"; cp "$$package_original" Package.swift; rm -f "$$original" "$$package_original"; }; \
 	trap restore EXIT; \
 	$(MAKE) generate-build-info; \
 	swift build -c release
@@ -65,16 +97,23 @@ mac-install: release
 mac-uninstall:
 	bash deploy/uninstall-launchdaemon.sh
 
-ios-release:
+prepare-profile-dependencies:
+	bash ../scripts/prepare-applepackage-dependency.sh --backend-dir . --min-ios "$(MIN_IOS)"
+
+ios-release: prepare-profile-dependencies
 	@set -euo pipefail; \
 	if [[ -z "$(IPHONEOS_SDK_PATH)" ]]; then echo "iphoneos SDK missing" >&2; exit 1; fi; \
 	if [[ ! -x "$(LDID)" ]]; then echo "ldid missing: $(LDID)" >&2; exit 1; fi; \
 	if [[ ! -x "$(SWIFT_STDLIB_TOOL)" ]]; then echo "swift-stdlib-tool missing: $(SWIFT_STDLIB_TOOL)" >&2; exit 1; fi; \
 	original="$$(mktemp)"; \
 	cp "$(BUILD_INFO)" "$$original"; \
-	restore() { cp "$$original" "$(BUILD_INFO)"; rm -f "$$original"; }; \
+	package_original="$$(mktemp)"; cp Package.swift "$$package_original"; \
+	unfair_original="$$(mktemp)"; cp ../../unfair/Package.swift "$$unfair_original"; \
+	if [[ "$(MIN_IOS)" == "14.0" ]]; then perl -0pi -e 's/\.iOS\(\.v15\)/.iOS(.v14)/' Package.swift ../../unfair/Package.swift; else perl -0pi -e 's/\.iOS\(\.v14\)/.iOS(.v15)/' Package.swift ../../unfair/Package.swift; fi; \
+	restore() { cp "$$original" "$(BUILD_INFO)"; cp "$$package_original" Package.swift; cp "$$unfair_original" ../../unfair/Package.swift; rm -f "$$original" "$$package_original" "$$unfair_original"; }; \
 	trap restore EXIT; \
 	$(MAKE) generate-build-info; \
+	if [[ "$(MIN_IOS)" == "14.0" ]]; then swift package clean; fi; \
 	bin_dir="$$(swift build -c release --product "$(EXECUTABLE_NAME)" --show-bin-path $(IOS_SWIFT_FLAGS))"; \
 	swift build -c release --product "$(EXECUTABLE_NAME)" $(IOS_SWIFT_FLAGS); \
 	rm -rf "$(IOS_BUILD_DIR)"; \
@@ -98,13 +137,17 @@ generate-build-info:
 	@commit="$$(git rev-parse --short=12 HEAD 2>/dev/null || awk -F'\"' '/static let commit/ { print $$2; exit }' "$(BUILD_INFO)" 2>/dev/null || echo unknown)"; \
 	if [[ -z "$$commit" ]]; then commit="unknown"; fi; \
 	timestamp="$$(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
-	printf 'enum BuildInfo {\n    static let commit = "%s"\n    static let timestamp = "%s"\n}\n' "$$commit" "$$timestamp" > "$(BUILD_INFO)"
+	printf 'enum BuildInfo {\n    static let commit = "%s"\n    static let timestamp = "%s"\n    static let version = "%s"\n    static let variant = "%s"\n    static let profile = "%s"\n    static let deviceArchitecture = "%s"\n    static let machOArch = "%s"\n    static let debArchitecture = "%s"\n    static let minIOS = "%s"\n    static let swiftTarget = "%s"\n}\n' \
+		"$$commit" "$$timestamp" "$(RELEASE_VERSION)" "$(DEVICE_VARIANT)" "$(DEVICE_PROFILE)" "$(DEVICE_ARCHITECTURE)" \
+		"$(MACH_O_ARCH)" "$(DEB_ARCHITECTURE)" "$(MIN_IOS)" "$(SWIFT_TARGET)" > "$(BUILD_INFO)"
 
 validate-profile-control:
 	@set -euo pipefail; \
 	if [[ ! -f "$(PROFILE_CONTROL)" ]]; then echo "unknown DEVICE_VARIANT: $(DEVICE_VARIANT)" >&2; exit 1; fi; \
-	if [[ "$(DEVICE_PROFILE)" == "taurine" && "$(DEVICE_VARIANT)" != "iphone11" ]]; then echo "taurine profile requires DEVICE_VARIANT=iphone11" >&2; exit 1; fi; \
-	if [[ "$(DEVICE_PROFILE)" != "taurine" && "$(DEVICE_VARIANT)" == "iphone11" ]]; then echo "iphone11 requires DEVICE_PROFILE=taurine" >&2; exit 1; fi
+	control_version="$$(awk '/^Version:/ { print $$2; exit }' "$(PROFILE_CONTROL)")"; \
+	control_architecture="$$(awk '/^Architecture:/ { print $$2; exit }' "$(PROFILE_CONTROL)")"; \
+	if [[ "$$control_version" != "$(RELEASE_VERSION)" ]]; then echo "$(PROFILE_CONTROL) version $$control_version does not match release manifest $(RELEASE_VERSION)" >&2; exit 1; fi; \
+	if [[ "$$control_architecture" != "$(DEB_ARCHITECTURE)" ]]; then echo "$(PROFILE_CONTROL) architecture $$control_architecture does not match release manifest $(DEB_ARCHITECTURE)" >&2; exit 1; fi
 
 clean-package:
 	rm -rf "$(IOS_BUILD_DIR)" ".theos"
@@ -120,21 +163,19 @@ after-stage:: validate-profile-control ios-release assppweb-frontend
 	prefix="$(THEOS_PACKAGE_INSTALL_PREFIX)"; \
 	package_runner=""; \
 	if [[ -n "$$prefix" ]]; then \
-		dyld_library_path="$$prefix/usr/lib:$$prefix/basebin:/usr/lib:/basebin"; \
+		dyld_library_path="$$prefix/usr/lib:$$prefix/basebin:$$prefix/usr/lib/swift:/usr/lib:/usr/lib/swift:/basebin"; \
 		launchd_path="$$prefix/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin"; \
 	else \
-		dyld_library_path="/usr/lib:/basebin"; \
+		dyld_library_path="/usr/lib:/usr/lib/swift:/basebin"; \
 		launchd_path="/usr/bin:/bin:/usr/sbin:/sbin"; \
 	fi; \
 	install -d "$(THEOS_STAGING_DIR)/usr/local/lib/unfaird"; \
 	install -m 0755 "$(IOS_BUILD_DIR)/$(EXECUTABLE_NAME)" "$(THEOS_STAGING_DIR)/usr/local/lib/unfaird/$(EXECUTABLE_NAME)"; \
-	if [[ "$(DEVICE_PROFILE)" == "taurine" ]]; then \
-		if [[ ! -x "$(TAURINE_RUNTIME_RUNNER)" ]]; then echo "Taurine runtime runner missing or not executable: $(TAURINE_RUNTIME_RUNNER)" >&2; exit 1; fi; \
+	if [[ "$(DEVICE_PROFILE)" == "taurine" || "$(DEVICE_VARIANT)" == "iphone8" ]]; then \
+		if [[ "$(DEVICE_PROFILE)" == "taurine" && ! -x "$(TAURINE_RUNTIME_RUNNER)" ]]; then echo "Taurine runtime runner missing or not executable: $(TAURINE_RUNTIME_RUNNER)" >&2; exit 1; fi; \
 		if [[ ! -f "$(TAURINE_RUNTIME_DUMPER)" ]]; then echo "Taurine runtime dumper missing: $(TAURINE_RUNTIME_DUMPER)" >&2; exit 1; fi; \
-		package_runner="/usr/local/lib/unfaird/UnfairRuntimeRunner"; \
-		install -m 0755 "$(TAURINE_RUNTIME_RUNNER)" "$(THEOS_STAGING_DIR)/usr/local/lib/unfaird/UnfairRuntimeRunner"; \
+		if [[ "$(DEVICE_PROFILE)" == "taurine" ]]; then package_runner="/usr/local/lib/unfaird/UnfairRuntimeRunner"; install -m 0755 "$(TAURINE_RUNTIME_RUNNER)" "$(THEOS_STAGING_DIR)/usr/local/lib/unfaird/UnfairRuntimeRunner"; "$(LDID)" -Spackaging/unfaird.entitlements "$(THEOS_STAGING_DIR)/usr/local/lib/unfaird/UnfairRuntimeRunner"; fi; \
 		install -m 0755 "$(TAURINE_RUNTIME_DUMPER)" "$(THEOS_STAGING_DIR)/usr/local/lib/unfaird/UnfairRuntimeDumper.dylib"; \
-		"$(LDID)" -Spackaging/unfaird.entitlements "$(THEOS_STAGING_DIR)/usr/local/lib/unfaird/UnfairRuntimeRunner"; \
 		"$(LDID)" -S "$(THEOS_STAGING_DIR)/usr/local/lib/unfaird/UnfairRuntimeDumper.dylib"; \
 		install -m 0755 vendor/taurine/fouldecrypt.kernrw "$(THEOS_STAGING_DIR)/usr/local/lib/unfaird/fouldecrypt.kernrw"; \
 		install -m 0755 vendor/taurine/libkernrw.0.dylib "$(THEOS_STAGING_DIR)/usr/local/lib/unfaird/libkernrw.0.dylib"; \

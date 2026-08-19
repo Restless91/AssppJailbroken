@@ -1,0 +1,13 @@
+diff --git a/Package.swift b/Package.swift
+index 2df5f4a..b5d18a8 100644
+--- a/Package.swift
++++ b/Package.swift
+@@ -6,7 +6,7 @@ import PackageDescription
+ let package = Package(
+     name: "ApplePackage",
+     platforms: [
+-        .iOS(.v15),
++        .iOS(.v14),
+         .macCatalyst(.v14),
+         .macOS(.v11),
+     ],

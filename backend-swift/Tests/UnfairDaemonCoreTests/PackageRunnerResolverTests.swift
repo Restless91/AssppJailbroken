@@ -44,6 +44,31 @@ final class PackageRunnerResolverTests: XCTestCase {
         XCTAssertEqual(arguments.last, "--force-extensions")
     }
 
+    func testRunnerIsSilentByDefault() {
+        let arguments = PackageRunnerResolver.arguments(
+            inputPath: "/input.ipa",
+            outputPath: "/output.ipa",
+            workingDirectoryPath: "/work",
+            extensionPolicy: .compatible,
+            supportsExtensionPolicy: true
+        )
+
+        XCTAssertFalse(arguments.contains("--verbose"))
+    }
+
+    func testRunnerCanOptIntoVerboseLogs() {
+        let arguments = PackageRunnerResolver.arguments(
+            inputPath: "/input.ipa",
+            outputPath: "/output.ipa",
+            workingDirectoryPath: "/work",
+            extensionPolicy: .compatible,
+            supportsExtensionPolicy: true,
+            verbose: true
+        )
+
+        XCTAssertTrue(arguments.contains("--verbose"))
+    }
+
     func testResumableRunnerReceivesBatchAndCheckpoint() {
         let arguments = PackageRunnerResolver.arguments(
             inputPath: "/input.ipa",

@@ -52,7 +52,9 @@ curl -sS -F "ipa=@/path/to/app.ipa" \
   http://127.0.0.1:8080/api/v1/decrypt
 ```
 
-Decrypt jobs always run with verbose UnfairKit logs enabled.
+HTTP decrypt jobs on the iPhone15 profile run with concise UnfairKit logs;
+other profiles retain detailed diagnostics. Pass the CLI `--verbose` flag
+when detailed Mach-O/mremap diagnostics are needed for a direct package run.
 
 The submit response includes `queue.id`, `queue.status`, `queue.ready`, `queue.ready_url`, `queue.download_url`, and `queue.validate_until`.
 

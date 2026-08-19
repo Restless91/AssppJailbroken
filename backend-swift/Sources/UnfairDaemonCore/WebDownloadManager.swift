@@ -267,6 +267,34 @@ final class WebDownloadManager {
     }
 
     private func resumeRecoverableTasks() {
+        // A daemon restart must never replay a package that was in the middle
+        // of appinst/package processing.  On iOS 17 this can repeatedly hit
+        // the disk-writes resource limit and reboot the device.  Operators can
+        // explicitly requeue a task through the HTTP resume endpoint after
+        // inspecting it.
+        if ["1", "true", "yes", "on"].contains(
+            ProcessInfo.processInfo.environment["UNFAIR_DISABLE_TASK_RESUME"]?.lowercased() ?? ""
+        ) {
+            lock.lock()
+            let recoverable = tasks.values.filter {
+                $0.task.status == DownloadStatus.pending.rawValue ||
+                    $0.task.status == DownloadStatus.paused.rawValue ||
+                    $0.task.status == DownloadStatus.downloading.rawValue ||
+                    $0.task.status == DownloadStatus.decrypting.rawValue ||
+                    $0.task.status == DownloadStatus.injecting.rawValue
+            }
+            for record in recoverable {
+                record.sessionTask?.cancel()
+                record.processCancellation?.cancel()
+                record.task.status = DownloadStatus.failed.rawValue
+                record.task.error = "Task recovery disabled after daemon restart; resume manually."
+                record.task.errorCode = .unknown
+                appendLogLocked(to: &record.task, phase: "decrypt", message: "startup recovery disabled; task not replayed")
+            }
+            lock.unlock()
+            persistTasks()
+            return
+        }
         lock.lock()
         let resumable = tasks.values.compactMap { record -> (String, Bool, String)? in
             let task = record.task
@@ -673,7 +701,10 @@ final class WebDownloadManager {
                     supportsExtensionPolicy: runnerPath != currentRunnerPath,
                     batchSize: checkpoint.batchSize,
                     checkpointPath: checkpointURL(for: taskID).path,
-                    supportsResumableBatches: supportsResumableBatches
+                    supportsResumableBatches: supportsResumableBatches,
+                    // iPhone 15 uses the stable silent process-dump path;
+                    // keep verbose diagnostics available on other profiles.
+                    verbose: BuildInfo.variant != "iphone15"
                 ),
                 workingDirectory: jobDirectory,
                 sandboxProfileURL: sandboxProfileURL,

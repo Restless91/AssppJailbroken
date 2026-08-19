@@ -1,6 +1,6 @@
 Package: wiki.qaq.unfaird
 Name: unfaird (iPhone 15)
-Version: 0.1.15
+Version: 0.1.16
 Architecture: iphoneos-arm64
 Description: Asspp on-device IPA decrypt daemon for iPhone 15 family.
  Profile: iOS 17.3, Dopamine 2 rootless, A16/arm64e target, builtin process dump.

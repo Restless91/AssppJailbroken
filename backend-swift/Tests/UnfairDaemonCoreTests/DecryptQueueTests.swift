@@ -3,6 +3,35 @@ import Foundation
 import XCTVapor
 
 final class DecryptQueueTests: XCTestCase {
+    func testReadyAndOutputRequireConfiguredAccessToken() throws {
+        let context = try TestContext()
+        defer { context.cleanup() }
+
+        let app = Application(.testing)
+        defer { app.shutdown() }
+        let config = WebConfig(
+            port: 18080,
+            dataDirectory: context.root.appendingPathComponent("data", isDirectory: true),
+            publicDirectory: context.root.appendingPathComponent("public", isDirectory: true),
+            publicBaseURL: "",
+            disableHTTPSRedirect: true,
+            autoCleanupDays: 0,
+            autoCleanupMaxMB: 0,
+            maxDownloadMB: 0,
+            downloadThreads: 1,
+            accessPasswordHash: "test-token"
+        )
+        try routes(app, config: config, decryptService: context.service)
+        let jobID = UUID().uuidString
+
+        try app.testable().test(.GET, "/api/v1/decrypt/\(jobID)/ready") { response in
+            XCTAssertEqual(response.status, .unauthorized)
+        }
+        try app.testable().test(.GET, "/api/v1/decrypt/\(jobID)/output") { response in
+            XCTAssertEqual(response.status, .unauthorized)
+        }
+    }
+
     func testDecryptRequestReturnsQueueBeforeWorkerRuns() throws {
         let context = try TestContext()
         defer { context.cleanup() }

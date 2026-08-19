@@ -7,6 +7,8 @@ on:
       - Makefile
       - backend-swift/**
       - frontend/**
+      - release/manifest.json
+      - scripts/release-manifest.mjs
       - .github/workflows/deb.yml
   push:
     branches: [main]
@@ -15,34 +17,54 @@ on:
       - Makefile
       - backend-swift/**
       - frontend/**
+      - release/manifest.json
+      - scripts/release-manifest.mjs
       - .github/workflows/deb.yml
 
 env:
   THEOS: ${{ github.workspace }}/theos
-  UNFAIR_REPOSITORY: lbr77/unfair
-  UNFAIR_REF: main
   HOMEBREW_NO_AUTO_UPDATE: 1
   HOMEBREW_NO_INSTALL_CLEANUP: 1
 
 jobs:
+  prepare:
+    name: Resolve release manifest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.manifest.outputs.matrix }}
+      unfair_repository: ${{ steps.manifest.outputs.unfair_repository }}
+      unfair_ref: ${{ steps.manifest.outputs.unfair_ref }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Validate and export release manifest
+        id: manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/release-manifest.mjs validate
+          echo "matrix=$(node scripts/release-manifest.mjs matrix)" >> "$GITHUB_OUTPUT"
+          node - <<'NODE' >> "$GITHUB_OUTPUT"
+          const manifest = require('./release/manifest.json')
+          console.log(`unfair_repository=${manifest.dependencies.unfair.repository}`)
+          console.log(`unfair_ref=${manifest.dependencies.unfair.ref}`)
+          NODE
+
   build:
     name: Build ${{ matrix.variant }} deb
+    needs: prepare
     runs-on: macos-26
     permissions:
       contents: read
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - variant: iphone8
-            profile: rootless
-            architecture: iphoneos-arm64
-          - variant: iphone11
-            profile: taurine
-            architecture: iphoneos-arm
-          - variant: iphone15
-            profile: rootless
-            architecture: iphoneos-arm64
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
 
     steps:
       - name: Checkout AssppJailbroken
@@ -53,30 +75,37 @@ jobs:
       - name: Checkout UnfairKit dependency
         uses: actions/checkout@v6
         with:
-          repository: ${{ env.UNFAIR_REPOSITORY }}
-          ref: ${{ env.UNFAIR_REF }}
+          repository: ${{ needs.prepare.outputs.unfair_repository }}
+          ref: ${{ needs.prepare.outputs.unfair_ref }}
           path: unfair
-
-      - name: Validate unified release version
-        working-directory: AssppJailbroken
-        shell: bash
-        run: |
-          set -euo pipefail
-          expected="$(awk '/^Version:/ { print $2; exit }' backend-swift/control)"
-          actual="$(awk '/^Version:/ { print $2; exit }' "backend-swift/packaging/control.${{ matrix.variant }}")"
-          test "$expected" = "$actual"
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            test "${GITHUB_REF_NAME#v}" = "$expected" || {
-              echo "Tag $GITHUB_REF_NAME does not match package version $expected" >&2
-              exit 1
-            }
-          fi
 
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
           cache: npm
           cache-dependency-path: AssppJailbroken/frontend/package-lock.json
+
+      - name: Validate unified release version
+        working-directory: AssppJailbroken
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/release-manifest.mjs validate
+          expected="$(node scripts/release-manifest.mjs version)"
+          source <(node scripts/release-manifest.mjs env "${{ matrix.variant }}")
+          actual="$(awk '/^Version:/ { print $2; exit }' "backend-swift/packaging/control.${{ matrix.variant }}")"
+          test "$expected" = "$actual"
+          test "$RELEASE_VERSION" = "$expected"
+          test "$DEVICE_PROFILE" = "${{ matrix.profile }}"
+          test "$DEB_ARCHITECTURE" = "${{ matrix.deb_arch }}"
+          test "$MACH_O_ARCH" = "${{ matrix.mach_o_arch }}"
+          test "$MIN_IOS" = "${{ matrix.min_ios }}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            test "${GITHUB_REF_NAME#v}" = "$expected" || {
+              echo "Tag $GITHUB_REF_NAME does not match package version $expected" >&2
+              exit 1
+            }
+          fi
 
       - name: Select Xcode 26
         shell: bash
@@ -114,12 +143,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          runner="$PWD/backend-swift/vendor/taurine/bootstrap/UnfairRuntimeRunner"
-          dumper="$PWD/backend-swift/vendor/taurine/bootstrap/UnfairRuntimeDumper.dylib"
-          echo 'd701ee770f9a1304838f8ab02c15aea6b05f290a6d1d48dbaa3ece616317c5ea' " $runner" | shasum -a 256 -c -
-          echo 'db647eefb4e49f9729b36ebedf8adf2e74ffda0cc0d944ade5a00c4c943bc8b3' " $dumper" | shasum -a 256 -c -
-          file "$runner" | grep -q 'arm64'
-          file "$dumper" | grep -q 'arm64'
+          runner="$PWD/${{ matrix.runtime_runner }}"
+          dumper="$PWD/${{ matrix.runtime_dumper }}"
+          test -x "$runner"
+          test -f "$dumper"
+          xcrun lipo -info "$runner" | tee /dev/stderr | grep -Eq '(^|[^[:alnum:]_])${{ matrix.mach_o_arch }}([^[:alnum:]_]|$)'
+          xcrun lipo -info "$dumper" | tee /dev/stderr | grep -Eq '(^|[^[:alnum:]_])${{ matrix.mach_o_arch }}([^[:alnum:]_]|$)'
           echo "TAURINE_RUNTIME_RUNNER=$runner" >> "$GITHUB_ENV"
           echo "TAURINE_RUNTIME_DUMPER=$dumper" >> "$GITHUB_ENV"
 
@@ -128,7 +157,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(awk '/^Version:/ { print $2; exit }' "backend-swift/packaging/control.${{ matrix.variant }}")"
+          version="$(node scripts/release-manifest.mjs version)"
           mkdir -p backend-swift/debs
           find backend-swift/debs -maxdepth 1 -type f -name "wiki.qaq.unfaird_${version}_*" -delete
           make -C backend-swift package \
@@ -146,19 +175,55 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version="$(awk '/^Version:/ { print $2; exit }' "backend-swift/packaging/control.${{ matrix.variant }}")"
+          version="$(node scripts/release-manifest.mjs version)"
           source_deb="$(find backend-swift/debs -maxdepth 1 -type f -name "wiki.qaq.unfaird_${version}_*.deb" -print | head -n 1)"
           test -f "$source_deb"
           mkdir -p release
-          output="release/wiki.qaq.unfaird_${version}_${{ matrix.variant }}_${{ matrix.architecture }}.deb"
+          output="release/wiki.qaq.unfaird_${version}_${{ matrix.variant }}_${{ matrix.deb_arch }}.deb"
           cp "$source_deb" "$output"
           test "$(dpkg-deb -f "$output" Version)" = "$version"
-          test "$(dpkg-deb -f "$output" Architecture)" = "${{ matrix.architecture }}"
+          test "$(dpkg-deb -f "$output" Architecture)" = "${{ matrix.deb_arch }}"
           dpkg-deb -f "$output" Name Description
+
+          source <(node scripts/release-manifest.mjs env "${{ matrix.variant }}")
+          audit_root="$(mktemp -d)"
+          trap 'rm -rf "$audit_root"' EXIT
+          dpkg-deb -x "$output" "$audit_root"
+          daemon="$(find "$audit_root" -type f -path '*/usr/local/lib/unfaird/UnfairDaemon' -print -quit)"
+          test -n "$daemon"
+
+          assert_architecture() {
+            local binary="$1"
+            local label="$2"
+            local architecture_info
+            architecture_info="$(xcrun lipo -info "$binary")"
+            echo "$label: $architecture_info"
+            grep -Eq "(^|[^[:alnum:]_])${MACH_O_ARCH}([^[:alnum:]_]|$)" <<< "$architecture_info"
+          }
+
+          assert_architecture "$daemon" UnfairDaemon
+          build_info="$(xcrun vtool -show-build "$daemon" 2>/dev/null || true)"
+          actual_min_ios="$(awk '$1 == "minos" { print $2; exit }' <<< "$build_info")"
+          if [[ -z "$actual_min_ios" ]]; then
+            load_commands="$(xcrun otool -l "$daemon")"
+            actual_min_ios="$(awk '/cmd LC_VERSION_MIN_IPHONEOS/ { found=1; next } found && $1 == "version" { print $2; exit }' <<< "$load_commands")"
+          fi
+          test -n "$actual_min_ios"
+          IFS=. read -r actual_major actual_minor _ <<< "$actual_min_ios"
+          actual_min_ios="${actual_major}.${actual_minor:-0}"
+          echo "UnfairDaemon minimum iOS: $actual_min_ios"
+          test "$actual_min_ios" = "$MIN_IOS"
+
           if [[ "${{ matrix.profile }}" == taurine ]]; then
             dpkg-deb --contents "$output" > release/deb-contents.txt
             grep -q 'UnfairRuntimeRunner' release/deb-contents.txt
             grep -q 'UnfairRuntimeDumper.dylib' release/deb-contents.txt
+            runtime_runner="$(find "$audit_root" -type f -path '*/usr/local/lib/unfaird/UnfairRuntimeRunner' -print -quit)"
+            runtime_dumper="$(find "$audit_root" -type f -path '*/usr/local/lib/unfaird/UnfairRuntimeDumper.dylib' -print -quit)"
+            test -n "$runtime_runner"
+            test -n "$runtime_dumper"
+            assert_architecture "$runtime_runner" UnfairRuntimeRunner
+            assert_architecture "$runtime_dumper" UnfairRuntimeDumper.dylib
           fi
           shasum -a 256 "$output" > "${output}.sha256"
           echo "path=$output" >> "$GITHUB_OUTPUT"
@@ -178,13 +243,25 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: build
     runs-on: ubuntu-latest
+    concurrency:
+      group: github-release-${{ github.ref }}
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Validate release manifest
+        run: node scripts/release-manifest.mjs validate
+
       - uses: actions/download-artifact@v6
         with:
           pattern: unfaird-*
-          path: release
+          path: release-artifacts
           merge-multiple: true
 
       - name: Upload unified device release
@@ -193,4 +270,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release upload "$GITHUB_REF_NAME" release/* --repo "$GITHUB_REPOSITORY" --clobber
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --generate-notes \
+              --title "$GITHUB_REF_NAME" || \
+              gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null
+          fi
+          gh release upload "$GITHUB_REF_NAME" release-artifacts/* --repo "$GITHUB_REPOSITORY" --clobber

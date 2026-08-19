@@ -1,6 +1,6 @@
 Package: wiki.qaq.unfaird
 Name: unfaird (iPhone 8)
-Version: 0.1.15
+Version: 0.1.16
 Architecture: iphoneos-arm64
 Description: Asspp on-device IPA decrypt daemon for iPhone 8/8 Plus.
  Profile: iOS 16.2, Dopamine rootless, arm64, builtin libjailbreak process dump.

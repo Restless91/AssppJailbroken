@@ -91,6 +91,14 @@ export class AdminDatabase {
         provider_name TEXT,
         build_commit TEXT,
         build_timestamp TEXT,
+        build_version TEXT,
+        build_variant TEXT,
+        build_profile TEXT,
+        device_architecture TEXT,
+        macho_arch TEXT,
+        deb_architecture TEXT,
+        min_ios TEXT,
+        swift_target TEXT,
         capabilities_json TEXT NOT NULL DEFAULT '{}',
         total_bytes INTEGER,
         free_bytes INTEGER,
@@ -241,6 +249,14 @@ export class AdminDatabase {
       );
     `);
     this.ensureColumn('devices', 'config_json', "TEXT NOT NULL DEFAULT '{}'");
+    this.ensureColumn('devices', 'build_version', 'TEXT');
+    this.ensureColumn('devices', 'build_variant', 'TEXT');
+    this.ensureColumn('devices', 'build_profile', 'TEXT');
+    this.ensureColumn('devices', 'device_architecture', 'TEXT');
+    this.ensureColumn('devices', 'macho_arch', 'TEXT');
+    this.ensureColumn('devices', 'deb_architecture', 'TEXT');
+    this.ensureColumn('devices', 'min_ios', 'TEXT');
+    this.ensureColumn('devices', 'swift_target', 'TEXT');
     this.ensureColumn('apple_accounts', 'storefront', "TEXT NOT NULL DEFAULT 'cn'");
     this.seedGroups();
   }
@@ -620,9 +636,15 @@ export class AdminDatabase {
     const existing = this.device(id);
     if (!existing) return null;
     const failures = online ? 0 : Number(existing.consecutiveFailures || 0) + 1;
-    const lifecycleState = failures >= 3 && !['maintenance', 'draining'].includes(existing.lifecycleState)
-      ? 'quarantined'
-      : existing.lifecycleState;
+    // Quarantine is an automatic circuit-breaker for consecutive probe
+    // failures. Once a probe succeeds again, clear only that automatic state
+    // so the scheduler can use the recovered device. Explicit maintenance or
+    // draining states remain untouched.
+    const lifecycleState = online && existing.lifecycleState === 'quarantined'
+      ? 'active'
+      : failures >= 3 && !['maintenance', 'draining'].includes(existing.lifecycleState)
+        ? 'quarantined'
+        : existing.lifecycleState;
     this.db.prepare(`
       UPDATE devices SET
         machine_identifier = COALESCE(?, machine_identifier),
@@ -632,6 +654,14 @@ export class AdminDatabase {
         provider_name = COALESCE(?, provider_name),
         build_commit = COALESCE(?, build_commit),
         build_timestamp = COALESCE(?, build_timestamp),
+        build_version = COALESCE(?, build_version),
+        build_variant = COALESCE(?, build_variant),
+        build_profile = COALESCE(?, build_profile),
+        device_architecture = COALESCE(?, device_architecture),
+        macho_arch = COALESCE(?, macho_arch),
+        deb_architecture = COALESCE(?, deb_architecture),
+        min_ios = COALESCE(?, min_ios),
+        swift_target = COALESCE(?, swift_target),
         capabilities_json = ?,
         total_bytes = COALESCE(?, total_bytes),
         free_bytes = COALESCE(?, free_bytes),
@@ -653,6 +683,14 @@ export class AdminDatabase {
       nullable(probe.providerName),
       nullable(probe.buildCommit),
       nullable(probe.buildTimestamp),
+      nullable(probe.buildVersion),
+      nullable(probe.buildVariant),
+      nullable(probe.buildProfile),
+      nullable(probe.deviceArchitecture),
+      nullable(probe.machOArch),
+      nullable(probe.debArchitecture),
+      nullable(probe.minIOS),
+      nullable(probe.swiftTarget),
       JSON.stringify(probe.capabilities || existing.capabilities || {}),
       numberOrNull(probe.totalBytes),
       numberOrNull(probe.freeBytes),
@@ -1435,6 +1473,14 @@ function deviceFromRow(row, accessToken = '') {
     providerName: row.provider_name,
     buildCommit: row.build_commit,
     buildTimestamp: row.build_timestamp,
+    buildVersion: row.build_version,
+    buildVariant: row.build_variant,
+    buildProfile: row.build_profile,
+    deviceArchitecture: row.device_architecture,
+    machOArch: row.macho_arch,
+    debArchitecture: row.deb_architecture,
+    minIOS: row.min_ios,
+    swiftTarget: row.swift_target,
     capabilities: parseJson(row.capabilities_json, {}),
     totalBytes: numberOrNull(row.total_bytes),
     freeBytes: numberOrNull(row.free_bytes),

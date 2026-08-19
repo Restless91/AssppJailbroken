@@ -1,6 +1,6 @@
 Package: wiki.qaq.unfaird
 Name: unfaird (iPhone 11 Taurine)
-Version: 0.1.15
+Version: 0.1.16
 Architecture: iphoneos-arm
 Description: Asspp on-device IPA decrypt daemon for iPhone 11.
  Profile: iOS 14.3, Taurine/Procursus rootful, arm64, kernrw runtime adapter.

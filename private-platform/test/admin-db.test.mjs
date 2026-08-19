@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { AdminDatabase, generateTotp, verifyTotp } from '../admin-db.mjs';
 
@@ -129,6 +130,120 @@ test('Apple account native storefront overrides manual fallback storefront', () 
     assert.equal(value.store.appleAccount(cnAccount.id, { includeSecret: true }).account.storefront, 'cn');
   } finally {
     value.cleanup();
+  }
+});
+
+test('device probes persist the daemon release profile', () => {
+  const value = fixture();
+  try {
+    value.store.updateDeviceProbe('iphone-main', {
+      online: true,
+      buildVersion: '0.1.16',
+      buildVariant: 'iphone15',
+      buildProfile: 'rootless',
+      deviceArchitecture: 'arm64e',
+      machOArch: 'arm64',
+      debArchitecture: 'iphoneos-arm64',
+      minIOS: '15.0',
+      swiftTarget: 'arm64-apple-ios15.0'
+    });
+
+    assert.deepEqual(
+      (({
+        buildVersion,
+        buildVariant,
+        buildProfile,
+        deviceArchitecture,
+        machOArch,
+        debArchitecture,
+        minIOS,
+        swiftTarget
+      }) => ({
+        buildVersion,
+        buildVariant,
+        buildProfile,
+        deviceArchitecture,
+        machOArch,
+        debArchitecture,
+        minIOS,
+        swiftTarget
+      }))(value.store.device('iphone-main')),
+      {
+        buildVersion: '0.1.16',
+        buildVariant: 'iphone15',
+        buildProfile: 'rootless',
+        deviceArchitecture: 'arm64e',
+        machOArch: 'arm64',
+        debArchitecture: 'iphoneos-arm64',
+        minIOS: '15.0',
+        swiftTarget: 'arm64-apple-ios15.0'
+      }
+    );
+  } finally {
+    value.cleanup();
+  }
+});
+
+test('successful probe clears automatic quarantine so recovered device is schedulable', () => {
+  const value = fixture();
+  try {
+    value.store.updateDeviceProbe('iphone-main', { online: false, error: 'timeout' });
+    value.store.updateDeviceProbe('iphone-main', { online: false, error: 'timeout' });
+    const quarantined = value.store.updateDeviceProbe('iphone-main', { online: false, error: 'timeout' });
+    assert.equal(quarantined.lifecycleState, 'quarantined');
+    assert.equal(value.store.schedulingDevices().length, 0);
+
+    const recovered = value.store.updateDeviceProbe('iphone-main', {
+      online: true,
+      modelName: 'iPhone 15',
+      iosVersion: '17.3.0',
+      capabilities: { appinstInstall: true, externalURLDownload: true }
+    });
+    assert.equal(recovered.lifecycleState, 'active');
+    assert.equal(recovered.consecutiveFailures, 0);
+    assert.equal(value.store.schedulingDevices()[0].id, 'iphone-main');
+  } finally {
+    value.cleanup();
+  }
+});
+
+test('existing device databases gain nullable daemon release columns safely', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'asspp-admin-migration-'));
+  const path = join(directory, 'platform.sqlite');
+  process.env.PLATFORM_MASTER_KEY = 'test-master-key-that-is-not-used-in-production';
+  const original = new AdminDatabase({
+    path,
+    legacyConfig: {
+      devices: [{ id: 'legacy-node', name: 'Legacy node', baseUrl: 'http://192.168.1.8:8080' }]
+    }
+  });
+  original.db.close();
+
+  const oldDatabase = new DatabaseSync(path);
+  for (const column of [
+    'build_version',
+    'build_variant',
+    'build_profile',
+    'device_architecture',
+    'macho_arch',
+    'deb_architecture',
+    'min_ios',
+    'swift_target'
+  ]) {
+    oldDatabase.exec(`ALTER TABLE devices DROP COLUMN ${column}`);
+  }
+  oldDatabase.close();
+
+  const migrated = new AdminDatabase({ path, legacyConfig: {} });
+  try {
+    const columns = migrated.db.prepare('PRAGMA table_info(devices)').all().map((item) => item.name);
+    assert.equal(columns.includes('build_version'), true);
+    assert.equal(columns.includes('swift_target'), true);
+    assert.equal(migrated.device('legacy-node').buildVersion, null);
+    assert.equal(migrated.device('legacy-node').swiftTarget, null);
+  } finally {
+    migrated.db.close();
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 

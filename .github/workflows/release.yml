@@ -25,6 +25,15 @@ jobs:
         with:
           node-version: 22
 
+      - name: Validate release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/release-manifest.mjs validate
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            test "${GITHUB_REF_NAME#v}" = "$(node scripts/release-manifest.mjs version)"
+          fi
+
       - name: Test platform
         working-directory: private-platform
         run: |
@@ -59,11 +68,23 @@ jobs:
     needs: build-platform
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    concurrency:
+      group: github-release-${{ github.ref }}
+      cancel-in-progress: false
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate release manifest
+        run: node scripts/release-manifest.mjs validate
+
       - uses: actions/download-artifact@v4
         with:
           name: asspp-istoreos-platform-${{ github.sha }}
-          path: release
+          path: release-artifacts
 
       - name: Create release and upload artifacts
         env:
@@ -76,8 +97,9 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --verify-tag \
               --generate-notes \
-              --title "$GITHUB_REF_NAME"
+              --title "$GITHUB_REF_NAME" || \
+              gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null
           fi
-          gh release upload "$GITHUB_REF_NAME" release/* \
+          gh release upload "$GITHUB_REF_NAME" release-artifacts/* \
             --repo "$GITHUB_REPOSITORY" \
             --clobber

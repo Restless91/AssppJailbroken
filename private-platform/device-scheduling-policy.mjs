@@ -20,7 +20,10 @@ export function evaluateDeviceScheduling(device, job, config = {}) {
   if (!compatibility.compatible) return compatibility;
 
   const readiness = evaluateDeviceDecryptReadiness(device, {
-    resumableBatches: Number(job?.software?.fileSizeBytes || 0) >= 800 * 1024 * 1024,
+    // Checkpointed batches improve recovery for large packages, but are an
+    // optional optimization. A node without this capability can still run
+    // the normal process-dump flow and must not be rejected as incompatible.
+    resumableBatches: false,
     extensionPolicy: job?.extensionDecryptionPolicy
   });
   if (!readiness.ready) return { eligible: false, ...readiness };

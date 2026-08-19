@@ -960,8 +960,19 @@ function deviceCard(device) {
   const storage = device.freeBytes == null ? '未知' : formatBytes(device.freeBytes);
   const vnode = device.vnodeCurrent == null ? '未知' : `${device.vnodeCurrent} / ${device.vnodeLimit || '?'}`;
   const build = device.buildCommit ? String(device.buildCommit).slice(0, 12) : '待采集';
+  const release = device.buildVersion || '旧版节点';
+  const buildProfile = [device.buildVariant, device.buildProfile].filter(Boolean).join(' / ') || '待采集';
+  const architectures = [device.deviceArchitecture, device.machOArch, device.debArchitecture]
+    .map((value) => value || '--')
+    .join(' / ');
+  const deployment = [device.minIOS, device.swiftTarget].filter(Boolean).join(' / ') || '待采集';
   const capabilities = deviceCapabilitySummary(device.capabilities);
   const profile = device.capabilityProfile || {};
+  const vnodeRatio = profile.vnodeRatio ?? (
+    Number(device.vnodeLimit || 0) > 0
+      ? Number(device.vnodeCurrent || 0) / Number(device.vnodeLimit)
+      : null
+  );
   return `
     <article class="admin-device-card">
       <div class="admin-device-head">
@@ -983,11 +994,14 @@ function deviceCard(device) {
         <div><span>运行环境</span><strong>${escapeHtml(device.jailbreakRuntime || '--')} / ${escapeHtml(device.providerName || '--')}</strong></div>
         <div><span>可用空间</span><strong>${storage}</strong></div>
         <div><span>vnode</span><strong>${vnode}</strong></div>
-        <div><span>daemon 构建</span><strong>${escapeHtml(build)}</strong></div>
+        <div><span>daemon 版本</span><strong>${escapeHtml(`${release} · ${build}`)}</strong></div>
+        <div><span>构建 Profile</span><strong>${escapeHtml(buildProfile)}</strong></div>
+        <div><span>设备 / Mach-O / Deb</span><strong>${escapeHtml(architectures)}</strong></div>
+        <div><span>最低 iOS / Swift Target</span><strong>${escapeHtml(deployment)}</strong></div>
         <div><span>砸壳能力</span><strong>${escapeHtml(capabilities)}</strong></div>
         <div><span>设备画像</span><strong>${escapeHtml(`${profile.generation || 'unknown'} · 批大小 ${profile.batchSize || '--'} · ${extensionPolicyLabel(profile.extensionPolicy)}`)}</strong></div>
         <div><span>历史表现</span><strong>${escapeHtml(`${Math.round(Number(profile.successRate || 0) * 100)}% 成功 · ${profile.attempts || 0} 次 · 评分 ${Number.isFinite(profile.score) ? profile.score : '暂停'}`)}</strong></div>
-        <div><span>资源状态</span><strong>${escapeHtml(`${device.thermalState || 'unknown'} · vnode ${profile.vnodeRatio ? Math.round(profile.vnodeRatio * 100) + '%' : '未知'}`)}</strong></div>
+        <div><span>资源状态</span><strong>${escapeHtml(`${device.thermalState || 'unknown'} · vnode ${vnodeRatio == null ? '未知' : Math.round(vnodeRatio * 100) + '%'}`)}</strong></div>
       </div>
       <div class="admin-device-head" style="margin-top:16px">
         <span class="badge ${device.online ? 'success' : 'neutral'}">${device.online ? '在线' : '离线'} · ${escapeHtml(device.groupName || device.priorityClass)}</span>

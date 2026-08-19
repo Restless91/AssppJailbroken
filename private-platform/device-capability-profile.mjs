@@ -8,11 +8,16 @@ export function buildDeviceCapabilityProfile(device, jobs = [], job = null) {
   const thermal = String(device?.thermalState || 'unknown').toLowerCase();
   const vnodeRatio = ratio(device?.vnodeCurrent, device?.vnodeLimit);
   const strictUnavailable = effectivePolicy === 'strict' && device?.capabilities?.extensionDecryption === false;
+  // iOS reports a capped vnode limit on some jailbreaks (often current === limit
+  // for every healthy process). Treat vnode pressure as a scheduling penalty,
+  // not a hard incompatibility; otherwise every online device is rejected.
+  const vnodePressure = vnodeRatio >= 0.9;
+  const resourcePressure = thermal === 'fair' && vnodeRatio >= 0.95;
   const reason = ['critical', 'serious'].includes(thermal)
     ? 'thermal_pressure'
-    : vnodeRatio >= 0.9
-      ? 'vnode_pressure'
-      : strictUnavailable ? 'extension_decryption_unavailable' : null;
+    : resourcePressure
+      ? 'resource_pressure'
+    : strictUnavailable ? 'extension_decryption_unavailable' : null;
   const packageBytes = Number(job?.software?.fileSizeBytes || 0);
   let batchSize = { iphone15: 8, iphone11: 4, iphone8: 2, unknown: 2 }[generation];
   if (history.memoryPressure > 0 || packageBytes >= 800 * MIB && generation !== 'iphone15') batchSize = Math.max(1, batchSize / 2);
@@ -20,12 +25,13 @@ export function buildDeviceCapabilityProfile(device, jobs = [], job = null) {
   let score = { iphone15: 40, iphone11: 25, iphone8: 15, unknown: 10 }[generation];
   score += Math.round(successRate * 30);
   score -= history.memoryPressure * 8 + history.runtimeFailures * 5;
+  if (vnodePressure) score -= 8;
   if (packageBytes >= 800 * MIB) score += generation === 'iphone15' ? 30 : -20;
   if (thermal === 'fair') score -= 15;
   if (reason) score = Number.NEGATIVE_INFINITY;
   return {
     eligible: reason === null,
-    reason: reason || 'eligible',
+    reason: reason || (vnodePressure ? 'vnode_pressure_warning' : 'eligible'),
     generation,
     provider: device?.providerName || 'unknown',
     batchSize: Math.max(1, Math.floor(batchSize)),

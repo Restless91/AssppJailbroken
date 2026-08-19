@@ -1,0 +1,239 @@
+diff --git a/Sources/ApplePackage/Commands/Authenticate.swift b/Sources/ApplePackage/Commands/Authenticate.swift
+index 3b49f10..2848957 100644
+--- a/Sources/ApplePackage/Commands/Authenticate.swift
++++ b/Sources/ApplePackage/Commands/Authenticate.swift
+@@ -10,6 +10,8 @@ import Foundation
+ import NIOHTTP1
+ 
+ public enum Authenticator {
++    private static let legacyAuthEndpoint = URL(string: "https://buy.itunes.apple.com/WebObjects/MZFinance.woa/wa/authenticate")!
++
+     private enum LoginResponse {
+         case success(Account)
+         case codeRequired
+@@ -31,53 +33,67 @@ public enum Authenticator {
+         let client = Configuration.makeHTTPClient(redirectConfiguration: .disallow)
+         defer { _ = client.shutdown() }
+ 
+-        var requestEndpoint: URL = try createInitialRequestEndpoint(baseURL: bagOutput.authEndpoint, deviceIdentifier: deviceIdentifier)
+         var cookies: [Cookie] = cookies
+         var storeFront = ""
+         var pod: String?
+-        var currentAttempt = 1
+-        var redirectAttempt = 0
+         var lastError: Error?
+ 
+-        while currentAttempt <= 2, redirectAttempt <= 3 {
+-            defer { currentAttempt += 1 }
+-            do {
+-                let request = try makeRequest(
+-                    endpoint: requestEndpoint,
+-                    email: email,
+-                    password: password,
+-                    code: code,
+-                    cookies: cookies,
+-                    deviceIdentifier: deviceIdentifier
+-                )
+-                let response = try await client.execute(request: request).get()
+-                let result = try parseResponse(
+-                    response,
+-                    email: email,
+-                    password: password,
+-                    code: code,
+-                    cookies: &cookies,
+-                    storeFront: &storeFront,
+-                    pod: &pod
+-                )
+-                switch result {
+-                case let .success(account):
+-                    return account
+-                case let .redirect(uRL):
+-                    requestEndpoint = uRL
+-                    currentAttempt -= 1 // allow one more attempt when redirect
+-                    redirectAttempt += 1
+-                    continue
+-                case .codeRequired:
+-                    currentAttempt += 65535 // stop attempts
+-                    try ensureFailed(Strings.authRequiresVerificationCode)
+-                case .retry:
+-                    continue
+-                case let .failure(string):
+-                    try ensureFailed("\(Strings.authFailed): \(string)")
++        let primaryEndpoint = try createInitialRequestEndpoint(
++            baseURL: bagOutput.authEndpoint,
++            deviceIdentifier: deviceIdentifier
++        )
++        let fallbackEndpoint = try createInitialRequestEndpoint(
++            baseURL: Self.legacyAuthEndpoint,
++            deviceIdentifier: deviceIdentifier
++        )
++        let endpoints = primaryEndpoint == fallbackEndpoint
++            ? [primaryEndpoint]
++            : [primaryEndpoint, fallbackEndpoint]
++
++        for (endpointIndex, endpoint) in endpoints.enumerated() {
++            var requestEndpoint = endpoint
++            var currentAttempt = 1
++            var redirectAttempt = 0
++            APLogger.info("auth: trying login endpoint \(endpointIndex + 1)/\(endpoints.count): \(endpoint)")
++
++            while currentAttempt <= 4, redirectAttempt <= 3 {
++                do {
++                    let request = try makeRequest(
++                        endpoint: requestEndpoint,
++                        email: email,
++                        password: password,
++                        code: code,
++                        cookies: cookies,
++                        deviceIdentifier: deviceIdentifier,
++                        attempt: currentAttempt
++                    )
++                    let response = try await client.execute(request: request).get()
++                    let result = try parseResponse(
++                        response,
++                        email: email,
++                        password: password,
++                        code: code,
++                        cookies: &cookies,
++                        storeFront: &storeFront,
++                        pod: &pod
++                    )
++                    switch result {
++                    case let .success(account):
++                        return account
++                    case let .redirect(uRL):
++                        requestEndpoint = uRL
++                        redirectAttempt += 1
++                    case .codeRequired:
++                        try ensureFailed(Strings.authRequiresVerificationCode)
++                    case .retry:
++                        break
++                    case let .failure(string):
++                        try ensureFailed("\(Strings.authFailed): \(string)")
++                    }
++                } catch {
++                    lastError = error
+                 }
+-            } catch {
+-                lastError = error
++                currentAttempt += 1
+             }
+         }
+ 
+@@ -114,13 +130,15 @@ public enum Authenticator {
+         password: String,
+         code: String,
+         cookies: [Cookie],
+-        deviceIdentifier: String
++        deviceIdentifier: String,
++        attempt: Int
+     ) throws -> HTTPClient.Request {
++        let normalizedCode = code.replacingOccurrences(of: " ", with: "")
+         let parameters: [String: String] = [
+             "appleId": email,
+-            "attempt": "\(code.isEmpty ? "4" : "2")",
++            "attempt": "\(attempt)",
+             "guid": deviceIdentifier,
+-            "password": "\(password)\(code)",
++            "password": "\(password)\(normalizedCode)",
+             "rmp": "0",
+             "why": "signIn",
+         ]
+@@ -131,11 +149,12 @@ public enum Authenticator {
+         )
+         var headers: [(String, String)] = [
+             ("User-Agent", Configuration.userAgent),
+-            ("Content-Type", "application/x-apple-plist"),
++            ("Content-Type", contentType(for: endpoint)),
+         ]
+         for item in cookies.buildCookieHeader(endpoint) {
+             headers.append(item)
+         }
++        APLogger.info("auth: sending native login attempt \(attempt) code_present=\(!normalizedCode.isEmpty)")
+         APLogger.logRequest(method: "POST", url: endpoint.absoluteString, headers: headers)
+         return try .init(
+             url: endpoint.absoluteString,
+@@ -145,6 +164,15 @@ public enum Authenticator {
+         )
+     }
+ 
++    private static func contentType(for endpoint: URL) -> String {
++        if endpoint.host == "auth.itunes.apple.com" {
++            // Apple's native login endpoint expects an XML plist body, but
++            // mature clients such as ipatool label this request as form data.
++            return "application/x-www-form-urlencoded"
++        }
++        return "application/x-apple-plist"
++    }
++
+     private static func parseResponse(
+         _ response: HTTPClient.Response,
+         email: String,
+@@ -182,17 +210,34 @@ public enum Authenticator {
+             guard let location = response.headers.first(name: "location"),
+                   let url = URL(string: location)
+             else {
+-                return .failure(Strings.failedToRetrieveRedirect)
++                return .failure("Apple returned a redirect without a usable login location (code: \(response.status.code)). Apple did not create a native 2FA challenge; keep the same device identifier, confirm the account at account.apple.com, then retry.")
+             }
+             return .redirect(url)
+         }
+ 
++        if response.status.code >= 500 {
++            return .failure("Apple authentication service returned \(response.status.code). Wait a few minutes and retry with the same device identifier.")
++        }
++
++        if response.status == .noContent {
++            if code.isEmpty {
++                return .codeRequired
++            }
++            return .failure("verification code was not accepted or the Apple authentication challenge expired (code: 204)")
++        }
++
+         guard var body = response.body,
+               let data = body.readData(length: body.readableBytes)
+         else {
+             return .failure("response body is empty (code: \(response.status.code))")
+         }
+ 
++        if let contentType = response.headers.first(name: "content-type")?.lowercased(),
++           contentType.contains("text/html")
++        {
++            return .failure("Apple returned an HTML authentication response instead of native login data (code: \(response.status.code)). Apple did not create a native 2FA challenge; keep the same device identifier, confirm the account at account.apple.com, then retry.")
++        }
++
+         let listItem = try PropertyListSerialization.propertyList(
+             from: data,
+             options: [],
+diff --git a/Sources/ApplePackage/Supplement/Logger.swift b/Sources/ApplePackage/Supplement/Logger.swift
+index 5907277..9a26016 100644
+--- a/Sources/ApplePackage/Supplement/Logger.swift
++++ b/Sources/ApplePackage/Supplement/Logger.swift
+@@ -35,7 +35,11 @@ public enum APLogger {
+         guard verbose else { return }
+         var msg = ">>> \(method) \(url)"
+         for (name, value) in headers {
+-            let safeValue = name.lowercased().contains("token") || name.lowercased().contains("password")
++            let lowercasedName = name.lowercased()
++            let safeValue = lowercasedName.contains("token") ||
++                lowercasedName.contains("password") ||
++                lowercasedName == "cookie" ||
++                lowercasedName == "authorization"
+                 ? "<redacted>"
+                 : value
+             msg += "\n    \(name): \(safeValue)"
+@@ -50,7 +54,13 @@ public enum APLogger {
+             msg += " (\(bodySize) bytes)"
+         }
+         for (name, value) in headers {
+-            msg += "\n    \(name): \(value)"
++            let lowercasedName = name.lowercased()
++            let safeValue = lowercasedName == "set-cookie" ||
++                lowercasedName == "cookie" ||
++                lowercasedName == "authorization"
++                ? "<redacted>"
++                : value
++            msg += "\n    \(name): \(safeValue)"
+         }
+         debug(msg)
+     }

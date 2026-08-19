@@ -3,7 +3,18 @@ import Foundation
 import Vapor
 
 struct NodeInfoResponse: Content {
-    struct Build: Content { let commit: String; let timestamp: String }
+    struct Build: Content {
+        let commit: String
+        let timestamp: String
+        let version: String
+        let variant: String
+        let profile: String
+        let deviceArchitecture: String
+        let machOArch: String
+        let debArchitecture: String
+        let minIOS: String
+        let swiftTarget: String
+    }
     struct Runtime: Content { let jailbreak: String; let provider: String }
     struct Storage: Content { let totalBytes: Int64?; let freeBytes: Int64? }
     struct Vnode: Content { let current: Int64?; let limit: Int64? }
@@ -43,7 +54,18 @@ struct NodeInfoResponse: Content {
             modelName: modelName(machine),
             iosVersion: osVersion(),
             thermalState: thermalState(),
-            build: Build(commit: BuildInfo.commit, timestamp: BuildInfo.timestamp),
+            build: Build(
+                commit: BuildInfo.commit,
+                timestamp: BuildInfo.timestamp,
+                version: BuildInfo.version,
+                variant: BuildInfo.variant,
+                profile: BuildInfo.profile,
+                deviceArchitecture: BuildInfo.deviceArchitecture,
+                machOArch: BuildInfo.machOArch,
+                debArchitecture: BuildInfo.debArchitecture,
+                minIOS: BuildInfo.minIOS,
+                swiftTarget: BuildInfo.swiftTarget
+            ),
             runtime: Runtime(jailbreak: jailbreakRuntime(), provider: decryptProvider()),
             storage: Storage(
                 totalBytes: (fs?[.systemSize] as? NSNumber)?.int64Value,

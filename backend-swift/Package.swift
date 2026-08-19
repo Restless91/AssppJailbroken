@@ -13,7 +13,7 @@ let package = Package(
     ],
     dependencies: [
         .package(name: "unfair-swift", path: "../../unfair"),
-        .package(url: "https://github.com/Lakr233/ApplePackage.git", exact: "1.2.7"),
+        .package(name: "ApplePackage", path: "vendor/ApplePackage"),
         .package(url: "https://github.com/swift-server/async-http-client.git", exact: "1.33.1"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", "1.3.0"..<"2.0.0"),
         .package(url: "https://github.com/vapor/vapor.git", exact: "4.60.0"),

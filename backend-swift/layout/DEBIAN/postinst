@@ -95,6 +95,14 @@ load_service() {
   exit 1
 }
 
-load_service "$UNFAIRD_LABEL" "$UNFAIRD_PLIST"
+# iPhone15/iOS17 can reboot when an old appinst/package job is still present.
+# Allow a maintenance install to stage files without starting the daemon;
+# remove this marker only after the device logs have been inspected.
+if [ -f /var/mobile/AssppWebData/disable-unfaird-autostart ]; then
+  launchctl bootout system/$UNFAIRD_LABEL >/dev/null 2>&1 || true
+  launchctl disable system/$UNFAIRD_LABEL >/dev/null 2>&1 || true
+else
+  load_service "$UNFAIRD_LABEL" "$UNFAIRD_PLIST"
+fi
 
 exit 0

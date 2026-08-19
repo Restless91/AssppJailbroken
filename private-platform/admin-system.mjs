@@ -189,7 +189,10 @@ export function createAdminSystem({
     }
 
     if (url.pathname === '/api/admin/devices' && req.method === 'GET') {
-      sendJson(res, 200, store.listDevices());
+      // Keep the admin view on the same decorated device contract used by
+      // scheduling. Without this, capabilityProfile is absent and the UI
+      // renders device image/resource fields as unknown.
+      sendJson(res, 200, store.listDevices().map(decorateDevice));
       return true;
     }
 
@@ -665,7 +668,7 @@ async function fetchDeviceInfo(device) {
   return normalizeNodeInfo(value);
 }
 
-function normalizeNodeInfo(value) {
+export function normalizeNodeInfo(value) {
   const storage = value.storage || {};
   const vnode = value.vnode || {};
   const build = value.build || {};
@@ -678,6 +681,14 @@ function normalizeNodeInfo(value) {
     providerName: runtime.provider || value.providerName || null,
     buildCommit: build.commit || value.build_commit || null,
     buildTimestamp: build.timestamp || value.build_timestamp || null,
+    buildVersion: build.version || value.build_version || null,
+    buildVariant: build.variant || value.build_variant || null,
+    buildProfile: build.profile || value.build_profile || null,
+    deviceArchitecture: build.deviceArchitecture || build.device_architecture || value.deviceArchitecture || value.device_architecture || null,
+    machOArch: build.machOArch || build.macho_arch || value.machOArch || value.macho_arch || null,
+    debArchitecture: build.debArchitecture || build.deb_architecture || value.debArchitecture || value.deb_architecture || null,
+    minIOS: build.minIOS || build.min_ios || value.minIOS || value.min_ios || null,
+    swiftTarget: build.swiftTarget || build.swift_target || value.swiftTarget || value.swift_target || null,
     capabilities: value.capabilities || {},
     totalBytes: storage.totalBytes ?? value.totalBytes ?? null,
     freeBytes: storage.freeBytes ?? value.freeBytes ?? null,

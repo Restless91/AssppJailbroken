@@ -13,6 +13,20 @@ func registerAppleProtocolRoutes(_ app: Application, config: WebConfig, manager:
         return try jsonEncodableResponse(DefaultAppleAccountStore.importAccount(body.account, config: config))
     }
 
+    // The iStoreOS account manager uses this endpoint when importing the
+    // device's current default Apple account into its global account pool.
+    // Keep the export behind the same access-token guard as import/status and
+    // return the full encrypted-at-rest account state only to an authorized
+    // management client.
+    app.get("api", "account", "default", "export") { req -> Response in
+        try requireAccess(req, config: config)
+        let (account, accountHash) = try DefaultAppleAccountStore.readAccount(config: config)
+        return try jsonEncodableResponse(AppleAccountExportResponse(
+            account: account,
+            accountHash: accountHash
+        ))
+    }
+
     app.post("api", "apple", "authenticate") { req -> EventLoopFuture<Response> in
         try requireAccess(req, config: config)
         return try appleProtocolFuture(for: req, as: AppleAuthenticateRequest.self) { body in
@@ -125,6 +139,11 @@ func registerAppleProtocolRoutes(_ app: Application, config: WebConfig, manager:
             ))
         }
     }
+}
+
+private struct AppleAccountExportResponse: Content {
+    let account: AppleAccount
+    let accountHash: String
 }
 
 private func appleProtocolFuture<T: Decodable>(

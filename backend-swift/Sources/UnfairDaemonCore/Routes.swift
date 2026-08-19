@@ -40,14 +40,14 @@ func routes(
 
     app.get("api", "v1", "decrypt", ":id", "ready") { req -> DecryptReadyResponse in
         if let config {
-            _ = try requireAccess(req, config: config, settingsStore: settingsStore)
+            try requireAccess(req, config: config)
         }
         return try decryptService.readyResponse(for: jobID(from: req))
     }
 
     app.get("api", "v1", "decrypt", ":id", "output") { req -> Response in
         if let config {
-            _ = try requireAccess(req, config: config, settingsStore: settingsStore)
+            try requireAccess(req, config: config)
         }
         let output = try decryptService.validatedReadyOutputURL(for: jobID(from: req))
 

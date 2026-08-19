@@ -15,13 +15,21 @@ test('profiles iPhone generations with adaptive batch and extension policy', () 
   assert.deepEqual({ batch: iphone8.batchSize, policy: iphone8.extensionPolicy }, { batch: 2, policy: 'main_only' });
 });
 
-test('thermal and vnode pressure drain a device before assignment', () => {
+test('thermal pressure drains a device while vnode pressure only lowers priority', () => {
   const thermal = buildDeviceCapabilityProfile({ id: '15', modelName: 'iPhone 15', thermalState: 'critical' }, []);
   const vnode = buildDeviceCapabilityProfile({ id: '8', modelName: 'iPhone 8', vnodeCurrent: 950, vnodeLimit: 1000 }, []);
   assert.equal(thermal.eligible, false);
   assert.equal(thermal.reason, 'thermal_pressure');
-  assert.equal(vnode.eligible, false);
-  assert.equal(vnode.reason, 'vnode_pressure');
+  assert.equal(vnode.eligible, true);
+  assert.equal(vnode.reason, 'vnode_pressure_warning');
+});
+
+test('fair thermal state plus saturated vnode pauses new work', () => {
+  const profile = buildDeviceCapabilityProfile({
+    id: '15', modelName: 'iPhone 15', thermalState: 'fair', vnodeCurrent: 10000, vnodeLimit: 10000
+  }, []);
+  assert.equal(profile.eligible, false);
+  assert.equal(profile.reason, 'resource_pressure');
 });
 
 test('large packages prefer newer devices and strict policy is a hard capability requirement', () => {

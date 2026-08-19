@@ -43,4 +43,22 @@ final class AppleProtocolServiceTests: XCTestCase {
         XCTAssertTrue(expiredByMessage.isPasswordTokenExpired)
         XCTAssertFalse(otherError.isPasswordTokenExpired)
     }
+
+    func testTransientAuthenticationErrorsAreLimitedToGatewayResponses() {
+        XCTAssertTrue(AppleProtocolService.transientAuthenticationErrorForTesting(
+            NSError(domain: "ApplePackage", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "failed to retrieve redirect location (HTTP 502)"
+            ])
+        ))
+        XCTAssertTrue(AppleProtocolService.transientAuthenticationErrorForTesting(
+            NSError(domain: "ApplePackage", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "response body is empty (code: 204) (HTTP 502)"
+            ])
+        ))
+        XCTAssertFalse(AppleProtocolService.transientAuthenticationErrorForTesting(
+            NSError(domain: "ApplePackage", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "invalid password"
+            ])
+        ))
+    }
 }

@@ -1154,11 +1154,15 @@ function updateCompatibilityWait(job, devices, activeDevices) {
   job.compatibility = next;
   if (!compatible.length) {
     const storageRejected = candidates.filter((device) => device.code === 'insufficient_storage');
+    const capabilityRejected = candidates.filter((device) => device.code && device.code !== 'ios_too_old' && device.code !== 'device_ios_unknown' && device.code !== 'insufficient_storage');
     if (storageRejected.length) {
       const summary = storageRejected.map((device) =>
         `${device.name} 需要 ${formatBytes(device.requiredBytes)}，可用 ${formatBytes(device.availableBytes)}`
       ).join('；');
       job.logs.push(`等待空间充足的设备：${summary}。`);
+    } else if (capabilityRejected.length) {
+      const reasons = capabilityRejected.map((device) => `${device.name}：${device.code}`).join('；');
+      job.logs.push(`等待满足砸壳能力要求的设备：${reasons}。`);
     } else if (minimumOsVersion) {
       job.logs.push(`等待兼容设备：应用最低要求 iOS ${minimumOsVersion}，当前没有已确认兼容且空闲的设备。`);
     } else {

@@ -88,13 +88,19 @@ enum AppleProtocolService {
         protocolError(from: error)
     }
 
+    static func transientAuthenticationErrorForTesting(_ error: Error) -> Bool {
+        isTransientAuthenticationError(error)
+    }
+
     private static func runWithTokenRefresh<T>(
         account: AppleAccount,
         _ operation: (ApplePackage.Account, String) async throws -> (ApplePackage.Account, T)
     ) async throws -> (account: AppleAccount, value: T) {
         do {
             try validateDeviceIdentifier(account.deviceIdentifier)
-            let result = try await operation(account.applePackageAccount(), account.deviceIdentifier)
+            let result = try await withTransientGatewayRetry {
+                try await operation(account.applePackageAccount(), account.deviceIdentifier)
+            }
             return (account: result.0.webAccount(deviceIdentifier: account.deviceIdentifier), value: result.1)
         } catch {
             let mappedError = protocolError(from: error)
@@ -104,12 +110,30 @@ enum AppleProtocolService {
 
             let refreshedAccount = try await refreshAccount(account)
             do {
-                let result = try await operation(refreshedAccount.applePackageAccount(), refreshedAccount.deviceIdentifier)
+                let result = try await withTransientGatewayRetry {
+                    try await operation(refreshedAccount.applePackageAccount(), refreshedAccount.deviceIdentifier)
+                }
                 return (account: result.0.webAccount(deviceIdentifier: refreshedAccount.deviceIdentifier), value: result.1)
             } catch {
                 throw protocolError(from: error)
             }
         }
+    }
+
+    private static func withTransientGatewayRetry<T>(_ operation: () async throws -> T) async throws -> T {
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                return try await operation()
+            } catch {
+                lastError = error
+                guard attempt < 3, isTransientAuthenticationError(error) else {
+                    throw error
+                }
+                try? await Task.sleep(nanoseconds: UInt64(attempt) * 750_000_000)
+            }
+        }
+        throw lastError ?? AppleProtocolError(message: "Apple request failed")
     }
 
     private static func refreshAccount(_ account: AppleAccount) async throws -> AppleAccount {
@@ -126,6 +150,14 @@ enum AppleProtocolService {
         guard deviceIdentifier.isEmpty == false else {
             throw AppleProtocolError(status: .badRequest, message: "deviceIdentifier is required")
         }
+    }
+
+    fileprivate static func isTransientAuthenticationError(_ error: Error) -> Bool {
+        let message = String(describing: error).lowercased()
+        return message.contains("http 502") ||
+            message.contains("failed to retrieve redirect location") ||
+            message.contains("response body is empty (code: 204)") ||
+            message.contains("isn't in the correct format")
     }
 
     private static func protocolError(from error: Error) -> AppleProtocolError {
@@ -214,13 +246,27 @@ private actor ApplePackageExecutor {
         cookies: [ApplePackage.Cookie],
         deviceIdentifier: String
     ) async throws -> ApplePackage.Account {
-        ApplePackage.Configuration.deviceIdentifier = deviceIdentifier
-        return try await ApplePackage.Authenticator.authenticate(
-            email: email,
-            password: password,
-            code: code,
-            cookies: cookies
-        )
+        var lastError: Error?
+        for attempt in 1...3 {
+            do {
+                ApplePackage.Configuration.deviceIdentifier = deviceIdentifier
+                return try await ApplePackage.Authenticator.authenticate(
+                    email: email,
+                    password: password,
+                    code: code,
+                    cookies: cookies
+                )
+            } catch {
+                lastError = error
+                guard attempt < 3, AppleProtocolService.isTransientAuthenticationError(error) else {
+                    throw error
+                }
+                // Apple may briefly return a gateway response or empty body
+                // while routing authentication. Retry only those responses.
+                try? await Task.sleep(nanoseconds: UInt64(attempt) * 750_000_000)
+            }
+        }
+        throw lastError ?? AppleProtocolError(message: "Apple authentication failed")
     }
 
     func purchase(

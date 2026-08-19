@@ -36,3 +36,21 @@ test('keeps legacy devices eligible when storage telemetry is unavailable', () =
     software: { minimumOsVersion: '13.0', fileSizeBytes: String(GIBIBYTE) }
   }).eligible, true);
 });
+
+test('does not reject a compatible iPhone 15 when resumable batches are unavailable', () => {
+  const result = evaluateDeviceScheduling({
+    modelName: 'iPhone 15',
+    iosVersion: '17.3.1',
+    freeBytes: 90 * GIBIBYTE,
+    capabilities: {
+      externalURLDownload: true,
+      appinstInstall: true,
+      resumableBatches: false
+    }
+  }, {
+    software: { minimumOsVersion: '15.0', fileSizeBytes: String(2 * GIBIBYTE) }
+  });
+
+  assert.equal(result.compatible, true);
+  assert.equal(result.eligible, true);
+});

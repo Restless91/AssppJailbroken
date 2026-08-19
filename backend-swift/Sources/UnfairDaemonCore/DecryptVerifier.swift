@@ -125,7 +125,7 @@ enum DecryptVerifier {
 
     private static func inspect(entry: Entry, archive: Archive) throws -> (encrypted: Bool, zeroFilled: Bool)? {
         let data = try read(entry: entry, archive: archive)
-        guard let slices = MachOEncryptionParser.slices(in: data)?.filter(\.isIPhoneArm64),
+        guard let slices = MachOEncryptionParser.slices(in: data)?.filter(\.isSupportedIPhoneSlice),
               slices.isEmpty == false else { return nil }
         var encrypted = false
         var zeroFilled = false
@@ -156,7 +156,7 @@ enum DecryptVerifier {
         var mutated: [String] = []
         for entry in sourceArchive where entry.type == .file && entry.path.hasPrefix("Payload/") {
             let source = try read(entry: entry, archive: sourceArchive)
-            guard let slices = MachOEncryptionParser.slices(in: source)?.filter(\.isIPhoneArm64),
+            guard let slices = MachOEncryptionParser.slices(in: source)?.filter(\.isSupportedIPhoneSlice),
                   slices.isEmpty == false else { continue }
             guard outputMachOPaths.contains(entry.path),
                   let outputEntry = outputArchive[entry.path] else {
@@ -203,7 +203,11 @@ private enum MachOEncryptionParser {
         let cryptid: UInt32
         let cryptidOffset: Int
 
-        var isIPhoneArm64: Bool { cpuType == 0x0100000c }
+        // WatchKit extensions can contain an arm64_32 slice in addition to
+        // the normal arm64 slice. Both slices are rewritten by fouldecrypt.
+        var isSupportedIPhoneSlice: Bool {
+            cpuType == 0x0100000c || cpuType == 0x0200000c
+        }
     }
 
     static func slices(in data: Data) -> [Slice]? {

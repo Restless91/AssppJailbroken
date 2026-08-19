@@ -27,6 +27,9 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - name: Validate release manifest
+        run: node scripts/release-manifest.mjs validate
+
       - name: Test and build frontend
         working-directory: frontend
         run: |
@@ -42,3 +45,44 @@ jobs:
 
       - name: Verify private platform container
         run: docker build --tag asspp-platform:ci private-platform
+
+  swift:
+    name: Swift tests
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - name: Checkout AssppJailbroken
+        uses: actions/checkout@v4
+        with:
+          path: AssppJailbroken
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate release manifest
+        working-directory: AssppJailbroken
+        run: node scripts/release-manifest.mjs validate
+
+      - name: Resolve pinned UnfairKit dependency
+        id: unfair
+        working-directory: AssppJailbroken
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE' >> "$GITHUB_OUTPUT"
+          const manifest = require('./release/manifest.json')
+          console.log(`repository=${manifest.dependencies.unfair.repository}`)
+          console.log(`ref=${manifest.dependencies.unfair.ref}`)
+          NODE
+
+      - name: Checkout UnfairKit dependency
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.unfair.outputs.repository }}
+          ref: ${{ steps.unfair.outputs.ref }}
+          path: unfair
+
+      - name: Run Swift tests
+        working-directory: AssppJailbroken/backend-swift
+        run: swift test
