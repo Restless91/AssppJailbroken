@@ -25,6 +25,7 @@ env:
   THEOS: ${{ github.workspace }}/theos
   HOMEBREW_NO_AUTO_UPDATE: 1
   HOMEBREW_NO_INSTALL_CLEANUP: 1
+  HOMEBREW_NO_REQUIRE_TAP_TRUST: 1
 
 jobs:
   prepare:
