@@ -92,13 +92,18 @@ jobs:
           set -euo pipefail
           node scripts/release-manifest.mjs validate
           expected="$(node scripts/release-manifest.mjs version)"
-          # Evaluate the manifest's shell assignments in this step.  The
-          # explicit export keeps the contract clear under `set -u` and makes
-          # the values available to the profile Make invocation.
-          eval "$(node scripts/release-manifest.mjs env \"${{ matrix.variant }}\")"
-          export RELEASE_VERSION DEVICE_VARIANT DEVICE_PROFILE DEVICE_ARCHITECTURE
-          export DEB_ARCHITECTURE MACH_O_ARCH SWIFT_TARGET IOS_TARGET MIN_IOS
-          export PROVIDER EXTENSION_POLICY BATCH_SIZE JETSAM_MB
+          # Keep the build contract explicit and derive it from the validated
+          # matrix. This avoids relying on shell parsing of the CLI export
+          # stream on hosted runners.
+          export RELEASE_VERSION="$expected"
+          export DEVICE_VARIANT="${{ matrix.variant }}"
+          export DEVICE_PROFILE="${{ matrix.profile }}"
+          export DEVICE_ARCHITECTURE="${{ matrix.device_arch }}"
+          export DEB_ARCHITECTURE="${{ matrix.deb_arch }}"
+          export MACH_O_ARCH="${{ matrix.mach_o_arch }}"
+          export SWIFT_TARGET="${{ matrix.swift_target }}"
+          export IOS_TARGET="${{ matrix.swift_target }}"
+          export MIN_IOS="${{ matrix.min_ios }}"
           actual="$(awk '/^Version:/ { print $2; exit }' "backend-swift/packaging/control.${{ matrix.variant }}")"
           test "$expected" = "$actual"
           test "$RELEASE_VERSION" = "$expected"
