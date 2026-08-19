@@ -171,7 +171,7 @@ after-stage:: validate-profile-control ios-release assppweb-frontend
 	fi; \
 	install -d "$(THEOS_STAGING_DIR)/usr/local/lib/unfaird"; \
 	install -m 0755 "$(IOS_BUILD_DIR)/$(EXECUTABLE_NAME)" "$(THEOS_STAGING_DIR)/usr/local/lib/unfaird/$(EXECUTABLE_NAME)"; \
-	if [[ "$(DEVICE_PROFILE)" == "taurine" || "$(DEVICE_VARIANT)" == "iphone8" ]]; then \
+	if [[ "$(DEVICE_PROFILE)" == "taurine" ]]; then \
 		if [[ "$(DEVICE_PROFILE)" == "taurine" && ! -x "$(TAURINE_RUNTIME_RUNNER)" ]]; then echo "Taurine runtime runner missing or not executable: $(TAURINE_RUNTIME_RUNNER)" >&2; exit 1; fi; \
 		if [[ ! -f "$(TAURINE_RUNTIME_DUMPER)" ]]; then echo "Taurine runtime dumper missing: $(TAURINE_RUNTIME_DUMPER)" >&2; exit 1; fi; \
 		if [[ "$(DEVICE_PROFILE)" == "taurine" ]]; then package_runner="/usr/local/lib/unfaird/UnfairRuntimeRunner"; install -m 0755 "$(TAURINE_RUNTIME_RUNNER)" "$(THEOS_STAGING_DIR)/usr/local/lib/unfaird/UnfairRuntimeRunner"; "$(LDID)" -Spackaging/unfaird.entitlements "$(THEOS_STAGING_DIR)/usr/local/lib/unfaird/UnfairRuntimeRunner"; fi; \

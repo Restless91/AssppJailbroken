@@ -197,7 +197,8 @@ jobs:
           test "$(dpkg-deb -f "$output" Architecture)" = "${{ matrix.deb_arch }}"
           dpkg-deb -f "$output" Name Description
 
-          source <(node scripts/release-manifest.mjs env "${{ matrix.variant }}")
+          export MACH_O_ARCH="${{ matrix.mach_o_arch }}"
+          export MIN_IOS="${{ matrix.min_ios }}"
           audit_root="$(mktemp -d)"
           trap 'rm -rf "$audit_root"' EXIT
           dpkg-deb -x "$output" "$audit_root"
