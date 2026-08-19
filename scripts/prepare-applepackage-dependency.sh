@@ -96,10 +96,20 @@ else
 fi
 
 if [[ "${MIN_IOS}" == "14.0" ]]; then
-  apply_patch_once \
-    "${REPOSITORY_ROOT}/patches/applepackage-ios14.patch" \
-    '.iOS(.v14)' \
-    'ApplePackage iOS 14 compatibility patch'
+  # SwiftPM may materialize a vendor snapshot without a usable git metadata
+  # directory. Apply this tiny compatibility change directly in that case;
+  # the checked-in patch remains the auditable source of the change.
+  if grep -Fq '.iOS(.v14)' "${PACKAGE_FILE}"; then
+    echo 'ApplePackage iOS 14 compatibility patch already applied'
+  elif grep -Fq '.iOS(.v15)' "${PACKAGE_FILE}"; then
+    perl -0pi -e 's/\.iOS\(\.v15\)/.iOS(.v14)/' "${PACKAGE_FILE}"
+    echo 'Applied ApplePackage iOS 14 compatibility patch'
+  else
+    apply_patch_once \
+      "${REPOSITORY_ROOT}/patches/applepackage-ios14.patch" \
+      '.iOS(.v14)' \
+      'ApplePackage iOS 14 compatibility patch'
+  fi
   grep -Fq '.iOS(.v14)' "${PACKAGE_FILE}"
 fi
 
