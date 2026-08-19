@@ -24,7 +24,7 @@
           "evidenceFiles": [
             {
               "path": "scripts/prepare-applepackage-dependency.sh",
-              "sha256": "c1f1ee2a289bfd9b50f0d44cbff8458ef70b78a07f6bfe94804d10485bcbf602"
+              "sha256": "cc0a07b4a2bfc4bfc02eff771a51fc02d463893f517709d229bb390ca3c8f1e3"
             },
             {
               "path": "patches/applepackage-runtime-fixes.patch",
@@ -45,7 +45,7 @@
       "evidenceFiles": [
         {
           "path": "scripts/prepare-applepackage-dependency.sh",
-          "sha256": "c1f1ee2a289bfd9b50f0d44cbff8458ef70b78a07f6bfe94804d10485bcbf602"
+          "sha256": "cc0a07b4a2bfc4bfc02eff771a51fc02d463893f517709d229bb390ca3c8f1e3"
         },
         {
           "path": "patches/applepackage-ios14.patch",
