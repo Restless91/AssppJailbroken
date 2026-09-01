@@ -1,0 +1,54 @@
+name: Build ipatool auth sidecar
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "private-platform/ipatool-auth-sidecar/**"
+      - ".github/workflows/ipatool-auth-sidecar.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/asspp-ipatool-auth
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build amd64 image
+        uses: docker/build-push-action@v6
+        with:
+          context: private-platform/ipatool-auth-sidecar
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          build-args: |
+            GOPROXY=https://proxy.golang.org,direct
+          cache-from: type=gha,scope=ipatool-auth-sidecar
+          cache-to: type=gha,mode=max,scope=ipatool-auth-sidecar
+
+      - name: Push image
+        run: docker push "${IMAGE}:${GITHUB_SHA}"
+
+      - name: Export router image
+        run: docker save "${IMAGE}:${GITHUB_SHA}" | gzip -1 > ipatool-auth-sidecar-linux-amd64.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ipatool-auth-sidecar-linux-amd64
+          path: ipatool-auth-sidecar-linux-amd64.tar.gz
+          retention-days: 14
