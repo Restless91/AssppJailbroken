@@ -3,7 +3,7 @@ name: Build ipatool auth sidecar
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, ipatool-auth-sidecar]
     paths:
       - "private-platform/ipatool-auth-sidecar/**"
       - ".github/workflows/ipatool-auth-sidecar.yml"
