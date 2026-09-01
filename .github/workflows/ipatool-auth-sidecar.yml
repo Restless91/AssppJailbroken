@@ -13,7 +13,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/asspp-ipatool-auth
+  IMAGE: ghcr.io/restless91/asspp-ipatool-auth
 
 jobs:
   build:
